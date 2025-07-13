@@ -123,12 +123,13 @@ var rootCmd = &cobra.Command{
 func init() {
 	_ = godotenv.Load() // Ignore error - .env file is optional
 
-	defaultHost := getEnvOrDefault("CLOG_HB_HOST", "localhost")
+	// Environment variables are now optional - auto-discovery is used as fallback
+	defaultHost := getEnvOrDefault("CLOG_HB_HOST", "")
 	defaultPort := getEnvIntOrDefault("CLOG_HB_PORT", DefaultHomebridgePort)
 	defaultToken := getEnvOrDefault("CLOG_HB_TOKEN", "")
 
-	rootCmd.Flags().StringVarP(&host, "host", "H", defaultHost, "Homebridge UI host")
-	rootCmd.Flags().IntVarP(&port, "port", "p", defaultPort, "Homebridge UI port")
+	rootCmd.Flags().StringVarP(&host, "host", "H", defaultHost, "Homebridge UI host (auto-discovered if not provided)")
+	rootCmd.Flags().IntVarP(&port, "port", "p", defaultPort, "Homebridge UI port (default: 8581)")
 	rootCmd.Flags().DurationVarP(&interval, "interval", "i", TimeoutConfig.DefaultPollingInterval,
 		"Polling interval (duration format: 3s, 30s, 1m, etc.)")
 	rootCmd.Flags().IntVarP(&count, "count", "c", -1,
@@ -150,6 +151,13 @@ func main() {
 }
 
 func runMonitor(cmd *cobra.Command, _ []string) {
+	// Auto-discover Homebridge if host/port not manually configured
+	finalHost, finalPort := resolveHomebridgeLocation(cmd)
+	if finalHost == "" {
+		fmt.Printf("ERROR: Failed to discover Homebridge instance and no manual configuration provided\n")
+		os.Exit(1)
+	}
+
 	// Check if main bridge mode was explicitly requested
 	mainMode, _ := cmd.Flags().GetBool("main")
 	if mainMode {
@@ -158,7 +166,7 @@ func runMonitor(cmd *cobra.Command, _ []string) {
 
 	if !useHAP {
 		// Main bridge mode
-		baseURL := fmt.Sprintf("http://%s:%d", host, port)
+		baseURL := fmt.Sprintf("http://%s:%d", finalHost, finalPort)
 
 		monitor := &StatusMonitor{
 			baseURL:    baseURL,
@@ -172,7 +180,9 @@ func runMonitor(cmd *cobra.Command, _ []string) {
 
 		monitor.run(count)
 	} else {
-		// Child bridges mode (default)
+		// Child bridges mode (default) - update global variables for getChildBridges()
+		host = finalHost
+		port = finalPort
 		runHAPMonitor(count)
 	}
 }
@@ -191,6 +201,133 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+// resolveHomebridgeLocation determines the final host/port to use
+// Manual configuration (CLI flags or env vars) takes precedence over auto-discovery
+func resolveHomebridgeLocation(cmd *cobra.Command) (string, int) {
+	// Check if host was manually provided (CLI flag or env var)
+	hostProvided := cmd.Flags().Changed("host") || os.Getenv("CLOG_HB_HOST") != ""
+	portProvided := cmd.Flags().Changed("port") || os.Getenv("CLOG_HB_PORT") != ""
+
+	if hostProvided || portProvided {
+		// Manual configuration provided - use it
+		finalHost := host
+		finalPort := port
+		
+		// If only one was provided, auto-discover the other if possible
+		if hostProvided && !portProvided {
+			// Host provided, port not provided - use default port
+			finalPort = DefaultHomebridgePort
+		} else if !hostProvided && portProvided {
+			// Port provided, host not provided - try auto-discovery for host
+			if discoveredHost := discoverHomebridgeHost(); discoveredHost != "" {
+				finalHost = discoveredHost
+			} else {
+				finalHost = "localhost" // fallback
+			}
+		}
+		
+		fmt.Printf("Using manual configuration: %s:%d\n", finalHost, finalPort)
+		return finalHost, finalPort
+	}
+
+	// No manual configuration - attempt auto-discovery
+	fmt.Printf("No manual configuration provided, attempting auto-discovery...\n")
+	discoveredHost := discoverHomebridgeHost()
+	if discoveredHost != "" {
+		fmt.Printf("Auto-discovered Homebridge at: %s:%d\n", discoveredHost, DefaultHomebridgePort)
+		return discoveredHost, DefaultHomebridgePort
+	}
+
+	fmt.Printf("Auto-discovery failed\n")
+	return "", 0
+}
+
+// discoverHomebridgeHost discovers the main Homebridge instance via mDNS and HAP verification
+func discoverHomebridgeHost() string {
+	debugf("Starting auto-discovery of main Homebridge instance\n")
+	
+	// Use custom mDNS to discover all Homebridge services
+	client := NewMDNSClient(TimeoutConfig.MDNSTotal)
+	ctx := context.Background()
+	
+	mdnsServices, err := client.DiscoverHomebridgeServices(ctx)
+	if err != nil {
+		debugf("mDNS discovery failed: %v\n", err)
+		return ""
+	}
+	
+	debugf("Found %d Homebridge services via mDNS\n", len(mdnsServices))
+	
+	// Test each service to find the main Homebridge instance
+	for _, service := range mdnsServices {
+		debugf("Testing service: %s at %s:%d\n", service.Name, service.Host, service.Port)
+		
+		if isMainHomebridgeInstance(service.Host, service.Port) {
+			debugf("Confirmed main Homebridge instance: %s\n", service.Host)
+			return service.Host
+		}
+	}
+	
+	debugf("No main Homebridge instance found among discovered services\n")
+	return ""
+}
+
+// isMainHomebridgeInstance checks if the given HAP service is the main Homebridge instance
+func isMainHomebridgeInstance(host string, port int) bool {
+	client := &http.Client{Timeout: TimeoutConfig.HTTPReachabilityTest}
+	
+	url := fmt.Sprintf("http://%s:%d/accessories", host, port)
+	resp, err := client.Get(url)
+	if err != nil {
+		debugf("Failed to connect to %s:%d - %v\n", host, port, err)
+		return false
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != HTTPStatusOK {
+		debugf("Non-200 response from %s:%d - status %d\n", host, port, resp.StatusCode)
+		return false
+	}
+	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		debugf("Failed to read response from %s:%d - %v\n", host, port, err)
+		return false
+	}
+	
+	var hapResp HAPResponse
+	if err := json.Unmarshal(body, &hapResp); err != nil {
+		debugf("Failed to parse HAP response from %s:%d - %v\n", host, port, err)
+		return false
+	}
+	
+	// Check if this is the main Homebridge instance
+	if len(hapResp.Accessories) > 0 {
+		firstAccessory := hapResp.Accessories[0]
+		for _, service := range firstAccessory.Services {
+			for _, char := range service.Characteristics {
+				// Look for manufacturer characteristic
+				if char.Description == "Manufacturer" {
+					if manufacturer, ok := char.Value.(string); ok && manufacturer == "homebridge.io" {
+						debugf("Confirmed main Homebridge via manufacturer: %s\n", manufacturer)
+						return true
+					}
+				}
+				// Look for model characteristic as additional confirmation
+				if char.Description == "Model" {
+					if model, ok := char.Value.(string); ok && model == "homebridge" {
+						debugf("Confirmed main Homebridge via model: %s\n", model)
+						return true
+					}
+				}
+			}
+		}
+	}
+	
+	debugf("Service at %s:%d is not main Homebridge\n", host, port)
+	return false
 }
 
 func (m *StatusMonitor) run(maxChecks int) {

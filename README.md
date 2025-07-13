@@ -169,7 +169,8 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 
 ## Roadmap
 
-ULANZI TC001 display output support (via AWTRIX3 API)
+- mDNS discovery of Homebridge main instance (eliminate manual host/port configuration)
+- ULANZI TC001 display output support (via AWTRIX3 API)
 
 ## License
 
