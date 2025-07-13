@@ -8,12 +8,14 @@ A Go CLI tool to monitor Homebridge accessory status changes in real-time. Track
 
 ## Features
 
+- **Zero-configuration setup** with automatic Homebridge discovery via mDNS
 - **Real-time monitoring** of all Homebridge accessories
 - **Two monitoring modes**: HAP protocol (default) or HTTP API
+- **AWTRIX3 LED matrix detection** with auto-discovery (display integration planned)
 - **Automatic discovery** of child bridges via mDNS
 - **Human-readable output** with timestamps
 - **Debug mode** for troubleshooting
-- **Configurable polling intervals**
+- **Configurable polling intervals** (default: 3s)
 - **Environment variable configuration**
 
 ## Quick Start
@@ -40,22 +42,46 @@ This creates the `hb-clog` binary in the current directory.
 
 ### Configuration
 
+**Zero Configuration (Recommended)**
+
+The tool now works out of the box with automatic discovery:
+
+```bash
+# Run immediately - no configuration needed!
+./hb-clog
+```
+
+**Manual Configuration (Optional)**
+
+For specific setups or when auto-discovery fails:
+
 1. Copy the environment example:
    ```bash
    cp .env.example .env
    ```
 
-2. Edit `.env` with your Homebridge settings:
+2. Edit `.env` with your settings:
    ```bash
+   # Homebridge configuration
    CLOG_HB_HOST=192.168.1.100  # Your Homebridge IP
    CLOG_HB_PORT=8581           # Homebridge UI port
    CLOG_HB_TOKEN=your_token    # Get from /api/auth/noauth
+   
+   # AWTRIX3 LED matrix detection configuration (optional - for future display integration)
+   CLOG_AT3_HOST=192.168.1.200 # Your AWTRIX3 device IP
+   CLOG_AT3_PORT=80            # AWTRIX3 port (usually 80)
    ```
 
 3. Get your authentication token:
+
+   **Option A: With Authentication Disabled (Easiest)**
    ```bash
    curl -X POST http://your-homebridge-ip:8581/api/auth/noauth
    ```
+   Enable this in Homebridge UI under Config → Homebridge Settings → "Disable Authentication".
+
+   **Option B: With Authentication Enabled**
+   If you prefer to keep authentication enabled, manually obtain a token from the Homebridge UI and set it in your `.env` file. The tool will work with any valid authentication token.
 
 ### Usage
 
@@ -151,26 +177,32 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLOG_HB_HOST` | `localhost` | Homebridge host IP/hostname |
+| `CLOG_HB_HOST` | auto-discover | Homebridge host IP/hostname |
 | `CLOG_HB_PORT` | `8581` | Homebridge UI port |
 | `CLOG_HB_TOKEN` | (none) | API authentication token |
+| `CLOG_AT3_HOST` | auto-discover | AWTRIX3 device IP/hostname (detection only) |
+| `CLOG_AT3_PORT` | `80` | AWTRIX3 device port (detection only) |
 
 ### Command Line Options
 
 | Flag | Description |
 |------|-------------|
-| `-h, --host` | Homebridge host (overrides env) |
-| `-p, --port` | Homebridge port (overrides env) |
+| `--hb-host` | Homebridge host (overrides auto-discovery) |
+| `--hb-port` | Homebridge port (overrides env) |
+| `--at3-host` | AWTRIX3 device host for detection (overrides auto-discovery) |
+| `--at3-port` | AWTRIX3 device port for detection (overrides env) |
 | `-t, --token` | Auth token (overrides env) |
 | `-i, --interval` | Polling interval (default: 3s) |
 | `-c, --count` | Number of checks before exit |
 | `-d, --debug` | Enable debug output |
 | `-m, --main` | Monitor main bridge only instead of child bridges |
+| `-H, -p` | Legacy short flags for `--hb-host` and `--hb-port` |
 
 ## Roadmap
 
-- mDNS discovery of Homebridge main instance (eliminate manual host/port configuration)
-- ULANZI TC001 display output support (via AWTRIX3 API)
+- ✅ **AWTRIX3 device detection** via mDNS - **COMPLETED in v0.3.0**
+- **ULANZI TC001 display output support** (via AWTRIX3 API) - LED matrix notification display for accessory state changes
+- Non-Homebridge HomeKit device polling (requires becoming a full HomeKit controller with Ed25519 keypairs, SRP pairing, and ChaCha20-Poly1305 encryption)
 
 ## License
 

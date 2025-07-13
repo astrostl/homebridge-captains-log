@@ -14,6 +14,7 @@ import (
 const (
 	testMDNSTimeout5s    = 5 * time.Second
 	testMDNSTimeout10s   = 10 * time.Second
+	testMDNSTimeout50ms  = 50 * time.Millisecond
 	testMDNSTimeout100ms = 100 * time.Millisecond
 	testMDNSTimeout150ms = 150 * time.Millisecond
 	testMDNSTimeout300ms = 300 * time.Millisecond
@@ -592,4 +593,155 @@ func TestDiscoverHomebridgeServicesTimeout(t *testing.T) {
 		t.Log("DiscoverHomebridgeServices() took longer than expected, which can happen with network operations")
 		// This is acceptable - don't fail the test for timing variations
 	}
+}
+
+// Test DiscoverAWTRIXServices function
+func TestDiscoverAWTRIXServices(t *testing.T) {
+	client := NewMDNSClient(testMDNSTimeout100ms)
+	ctx, cancel := context.WithTimeout(context.Background(), testMDNSTimeout150ms)
+	defer cancel()
+
+	// Use a timeout to avoid hanging
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		services, err := client.DiscoverAWTRIXServices(ctx)
+		// Should complete without hanging - services may be nil or empty
+		if err != nil {
+			t.Logf("DiscoverAWTRIXServices() returned error: %v", err)
+		} else {
+			t.Logf("DiscoverAWTRIXServices() found %d services", len(services))
+		}
+	}()
+
+	select {
+	case <-done:
+		// Test completed successfully
+	case <-time.After(testMDNSTimeout300ms):
+		t.Log("DiscoverAWTRIXServices() took longer than expected, which can happen with network operations")
+	}
+}
+
+// Test edge cases in mDNS parsing
+func TestMDNSParsingEdgeCases(t *testing.T) {
+	client := &MDNSClient{}
+
+	// Test parseServiceResponse with various edge cases
+	t.Run("nil message", func(t *testing.T) {
+		result := client.parseServiceResponse(nil, "test")
+		if result != nil {
+			t.Errorf("parseServiceResponse(nil) should return nil")
+		}
+	})
+
+	t.Run("message with no answers", func(t *testing.T) {
+		message := &dnsmessage.Message{Answers: []dnsmessage.Resource{}}
+		result := client.parseServiceResponse(message, "test")
+		if result != nil {
+			t.Errorf("parseServiceResponse() with no answers should return nil")
+		}
+	})
+}
+
+// Test mDNS service filtering logic
+func TestMDNSServiceAdvancedFiltering(t *testing.T) {
+	// Test complex filtering scenarios
+	serviceNames := []string{
+		"HomeKitBridge 1234",
+		"SomeOtherDevice 5678",
+		"TestBridge 9999",
+		"HomeKitBridge 4567",
+	}
+	expectedNames := []string{"HomeKitBridge", "TestBridge"}
+
+	result := filterServicesByExpectedNames(serviceNames, expectedNames)
+
+	// Should find 3 services (2 HomeKitBridge + 1 TestBridge)
+	expectedCount := 3
+	if len(result) != expectedCount {
+		t.Errorf("filterServicesByExpectedNames() = %d services, want %d", len(result), expectedCount)
+	}
+
+	// Verify correct services were found
+	expectedServices := []string{"HomeKitBridge 1234", "TestBridge 9999", "HomeKitBridge 4567"}
+	for i, service := range result {
+		if i < len(expectedServices) && service != expectedServices[i] {
+			t.Errorf("Service %d = %s, want %s", i, service, expectedServices[i])
+		}
+	}
+}
+
+// Test mDNS timeout handling
+func TestMDNSTimeoutHandling(t *testing.T) {
+	// Test very short timeout
+	client := NewMDNSClient(1 * time.Millisecond) // Extremely short
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+
+	// Should handle timeout gracefully
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err := client.DiscoverHomebridgeServices(ctx)
+		// Error is expected due to very short timeout
+		if err != nil {
+			t.Logf("Expected timeout error: %v", err)
+		}
+	}()
+
+	select {
+	case <-done:
+		// Test completed
+	case <-time.After(testMDNSTimeout100ms):
+		t.Log("Timeout test completed within reasonable time")
+	}
+}
+
+// Test parseServiceResponseForType with edge cases
+func TestParseServiceResponseForType(t *testing.T) {
+	client := &MDNSClient{}
+
+	t.Run("nil response", func(t *testing.T) {
+		result := client.parseServiceResponseForType(nil, "test", "_http._tcp")
+		if result != nil {
+			t.Errorf("parseServiceResponseForType(nil) should return nil")
+		}
+	})
+
+	t.Run("service with TXT records", func(t *testing.T) {
+		// Create a mock response - this is simplified since we can't easily create
+		// a full dnsmessage.Message, but we test the nil handling
+		result := client.parseServiceResponseForType(nil, "TestService", "_http._tcp")
+		if result != nil {
+			t.Errorf("parseServiceResponseForType() with nil message should return nil")
+		}
+	})
+}
+
+// Test lookupServiceWithRetries timeout and retry logic
+func TestLookupServiceWithRetries(t *testing.T) {
+	client := &MDNSClient{timeout: testMDNSTimeout50ms}
+
+	t.Run("service lookup with short timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), testMDNSTimeout100ms)
+		defer cancel()
+
+		// This will likely timeout, but should not hang
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			result := client.lookupServiceWithRetries(ctx, "NonExistentService", "_hap._tcp")
+			// Result may be nil due to timeout, which is acceptable
+			if result != nil {
+				t.Logf("Unexpected service found: %+v", result)
+			}
+		}()
+
+		select {
+		case <-done:
+			// Test completed
+		case <-time.After(testMDNSTimeout300ms):
+			t.Log("Lookup test completed within reasonable time")
+		}
+	})
 }

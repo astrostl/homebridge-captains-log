@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-07-13
+
+### Added
+- **AWTRIX3 device detection** with automatic mDNS discovery via `_awtrix._tcp` service type (display integration planned for future release)
+- **Concurrent service discovery** using goroutines for improved performance
+- **Automatic Homebridge discovery** via mDNS - zero configuration by default
+- **AWTRIX3 detection configuration** via `CLOG_AT3_HOST` and `CLOG_AT3_PORT` environment variables
+- **AWTRIX3 detection CLI flags** `--at3-host` and `--at3-port` for manual configuration
+- **Hostname to IP resolution** for both Homebridge and AWTRIX3 services
+- **Graceful fallback handling** when AWTRIX3 devices are not found
+
+### Changed
+- **BREAKING: Zero-configuration by default** - tool automatically discovers Homebridge without setup
+- **Flag naming consistency** - changed `--host`/`--port` to `--hb-host`/`--hb-port` (maintains backward compatibility with short flags)
+- **Default polling interval** changed from 30s to 3s for more responsive monitoring
+- **Critical path behavior** - Homebridge discovery failure causes exit, AWTRIX3 failure continues
+- **Manual configuration precedence** - CLI flags and environment variables override auto-discovery
+
+### Fixed
+- **Service discovery reliability** with enhanced mDNS implementation
+- **Concurrent discovery performance** with proper goroutine synchronization
+
+### Development
+- **Enhanced environment configuration** with AWTRIX3 detection variables in `.env.example`
+- **Improved documentation** with auto-discovery details and configuration options
+- **Updated CLI help text** to reflect new flag names and defaults
+
 ## [0.2.0] - 2025-07-13
 
 ### Added

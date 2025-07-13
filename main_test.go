@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 // Test constants to avoid magic numbers
@@ -40,6 +42,10 @@ const (
 	testCharBrightness  = "Brightness"
 	testServiceNameTest = "TestService"
 	testHostIP          = "192.168.1.100"
+	testHostIPAlt       = "192.168.1.200"
+	testPortCustom      = 8888
+	testCharDescName    = "Name"
+	testCharDescManuf   = "Manufacturer"
 )
 
 func TestGetEnvOrDefault(t *testing.T) {
@@ -1255,5 +1261,890 @@ func TestDiscoverHAPServicesWithTimeoutAndFilter(t *testing.T) {
 		t.Log("No services found, which is acceptable for network-dependent test")
 	} else {
 		t.Logf("Found %d services", len(services))
+	}
+}
+
+// Test isMainHomebridgeInstance with mock responses
+func TestIsMainHomebridgeInstance(t *testing.T) {
+	t.Run("valid main bridge", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/accessories" {
+				w.Header().Set("Content-Type", "application/json")
+				response := HAPResponse{
+					Accessories: []HAPAccessoryData{
+						{
+							AID: 1,
+							Services: []HAPService{
+								{
+									Characteristics: []HAPCharacteristic{
+										{Description: testCharDescManuf, Value: "homebridge.io"},
+									},
+								},
+							},
+						},
+					},
+				}
+				_ = json.NewEncoder(w).Encode(response)
+			}
+		}))
+		defer server.Close()
+
+		host, port := extractHostPort(server.URL)
+		result := isMainHomebridgeInstance(host, port)
+		if !result {
+			t.Errorf("isMainHomebridgeInstance() = false, want true for valid main bridge")
+		}
+	})
+
+	t.Run("not main bridge", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/accessories" {
+				w.Header().Set("Content-Type", "application/json")
+				response := HAPResponse{
+					Accessories: []HAPAccessoryData{
+						{
+							AID: 1,
+							Services: []HAPService{
+								{
+									Characteristics: []HAPCharacteristic{
+										{Description: "Name", Value: "Test Device"},
+									},
+								},
+							},
+						},
+					},
+				}
+				_ = json.NewEncoder(w).Encode(response)
+			}
+		}))
+		defer server.Close()
+
+		host, port := extractHostPort(server.URL)
+		result := isMainHomebridgeInstance(host, port)
+		if result {
+			t.Errorf("isMainHomebridgeInstance() = true, want false for non-main bridge")
+		}
+	})
+
+	t.Run("connection error", func(t *testing.T) {
+		result := isMainHomebridgeInstance("nonexistent.invalid", testPortInvalid)
+		if result {
+			t.Errorf("isMainHomebridgeInstance() = true, want false for connection error")
+		}
+	})
+}
+
+// Test resolveHostnameToIP function
+func TestResolveHostnameToIP(t *testing.T) {
+	tests := []struct {
+		name     string
+		hostname string
+		wantIP   bool
+	}{
+		{"valid IP", "192.168.1.100", true},
+		{"localhost", "localhost", false}, // May resolve to IP or return hostname
+		{"invalid hostname", "invalid.nonexistent.domain", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := resolveHostnameToIP(tt.hostname)
+			if tt.wantIP {
+				if net.ParseIP(result) == nil {
+					t.Errorf("resolveHostnameToIP(%s) = %s, want valid IP", tt.hostname, result)
+				}
+			} else {
+				// Should return something (either IP or original hostname)
+				if result == "" {
+					t.Errorf("resolveHostnameToIP(%s) = empty, want non-empty result", tt.hostname)
+				}
+			}
+		})
+	}
+}
+
+// Test validation functions
+func TestValidateMainHomebridgeResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		response *HAPResponse
+		want     bool
+	}{
+		{
+			name: "valid homebridge response",
+			response: &HAPResponse{
+				Accessories: []HAPAccessoryData{
+					{
+						Services: []HAPService{
+							{
+								Characteristics: []HAPCharacteristic{
+									{Description: testCharDescManuf, Value: "homebridge.io"},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "empty accessories",
+			response: &HAPResponse{
+				Accessories: []HAPAccessoryData{},
+			},
+			want: false,
+		},
+		{
+			name: "no homebridge characteristics",
+			response: &HAPResponse{
+				Accessories: []HAPAccessoryData{
+					{
+						Services: []HAPService{
+							{
+								Characteristics: []HAPCharacteristic{
+									{Description: testCharDescName, Value: "Some Device"},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := validateMainHomebridgeResponse(tt.response, "test", testPort)
+			if result != tt.want {
+				t.Errorf("validateMainHomebridgeResponse() = %v, want %v", result, tt.want)
+			}
+		})
+	}
+}
+
+// Test isMainHomebridgeCharacteristic function
+func TestIsMainHomebridgeCharacteristic(t *testing.T) {
+	tests := []struct {
+		name string
+		char HAPCharacteristic
+		want bool
+	}{
+		{
+			name: "manufacturer homebridge.io",
+			char: HAPCharacteristic{Description: "Manufacturer", Value: "homebridge.io"},
+			want: true,
+		},
+		{
+			name: "model homebridge",
+			char: HAPCharacteristic{Description: "Model", Value: "homebridge"},
+			want: true,
+		},
+		{
+			name: "other manufacturer",
+			char: HAPCharacteristic{Description: "Manufacturer", Value: "Apple"},
+			want: false,
+		},
+		{
+			name: "non-string value",
+			char: HAPCharacteristic{Description: "Manufacturer", Value: testAID123},
+			want: false,
+		},
+		{
+			name: "different characteristic",
+			char: HAPCharacteristic{Description: "Name", Value: "Test Device"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isMainHomebridgeCharacteristic(tt.char)
+			if result != tt.want {
+				t.Errorf("isMainHomebridgeCharacteristic() = %v, want %v", result, tt.want)
+			}
+		})
+	}
+}
+
+// createTestCmdWithFlags creates a cobra command with specified flags
+func createTestCmdWithFlags(hostFlag, portFlag string) *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Flags().StringP("hb-host", "H", "", "")
+	cmd.Flags().IntP("hb-port", "P", DefaultHomebridgePort, "")
+	if hostFlag != "" {
+		_ = cmd.Flags().Set("hb-host", hostFlag)
+	}
+	if portFlag != "" {
+		_ = cmd.Flags().Set("hb-port", portFlag)
+	}
+	return cmd
+}
+
+// Test resolveHomebridgeLocation function
+func TestResolveHomebridgeLocationManualConfig(t *testing.T) {
+	originalHost := host
+	originalPort := port
+	defer func() {
+		host = originalHost
+		port = originalPort
+	}()
+
+	t.Run("manual host and port via flags", func(t *testing.T) {
+		host = testHostIP
+		port = testPortCustom
+		cmd := createTestCmdWithFlags(testHostIP, strconv.Itoa(testPortCustom))
+
+		gotHost, gotPort := resolveHomebridgeLocation(cmd)
+
+		if gotHost != testHostIP || gotPort != testPortCustom {
+			t.Errorf("resolveHomebridgeLocation() = (%s, %d), want (%s, %d)", gotHost, gotPort, testHostIP, testPortCustom)
+		}
+	})
+
+	t.Run("only host provided, use default port", func(t *testing.T) {
+		host = testHostIPAlt
+		port = DefaultHomebridgePort
+		cmd := createTestCmdWithFlags(testHostIPAlt, "")
+
+		gotHost, gotPort := resolveHomebridgeLocation(cmd)
+
+		if gotHost != testHostIPAlt || gotPort != DefaultHomebridgePort {
+			t.Errorf("resolveHomebridgeLocation() = (%s, %d), want (%s, %d)",
+				gotHost, gotPort, testHostIPAlt, DefaultHomebridgePort)
+		}
+	})
+}
+
+// createTestServerWithValidHAP creates test server that returns valid HAP response
+func createTestServerWithValidHAP() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/accessories" {
+			w.Header().Set("Content-Type", "application/json")
+			response := HAPResponse{
+				Accessories: []HAPAccessoryData{
+					{
+						AID: 1,
+						Services: []HAPService{
+							{
+								Characteristics: []HAPCharacteristic{
+									{Description: testCharDescManuf, Value: "homebridge.io"},
+								},
+							},
+						},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(response)
+		}
+	}))
+}
+
+// testSuccessfulValidation tests successful HAP response validation
+func testSuccessfulValidation(t *testing.T) {
+	server := createTestServerWithValidHAP()
+	defer server.Close()
+
+	host, port := extractHostPort(server.URL)
+	result, err := fetchHAPResponseForValidation(host, port)
+
+	if err != nil {
+		t.Errorf("fetchHAPResponseForValidation() error = %v, want nil", err)
+	}
+	if result == nil {
+		t.Errorf("fetchHAPResponseForValidation() result = nil, want non-nil")
+		return
+	}
+	if len(result.Accessories) != 1 {
+		t.Errorf("fetchHAPResponseForValidation() accessories count = %d, want 1", len(result.Accessories))
+	}
+}
+
+// testServerError tests server error handling in HAP validation
+func testServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	host, port := extractHostPort(server.URL)
+	result, err := fetchHAPResponseForValidation(host, port)
+
+	if err == nil {
+		t.Errorf("fetchHAPResponseForValidation() error = nil, want error")
+	}
+	if result != nil {
+		t.Errorf("fetchHAPResponseForValidation() result = %v, want nil", result)
+	}
+}
+
+// testInvalidJSON tests invalid JSON response handling
+func testInvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("invalid json"))
+	}))
+	defer server.Close()
+
+	host, port := extractHostPort(server.URL)
+	result, err := fetchHAPResponseForValidation(host, port)
+
+	if err == nil {
+		t.Errorf("fetchHAPResponseForValidation() error = nil, want error")
+	}
+	if result != nil {
+		t.Errorf("fetchHAPResponseForValidation() result = %v, want nil", result)
+	}
+}
+
+// Test fetchHAPResponseForValidation function
+func TestFetchHAPResponseForValidationCases(t *testing.T) {
+	t.Run("successful validation response", testSuccessfulValidation)
+	t.Run("server error", testServerError)
+	t.Run("invalid JSON response", testInvalidJSON)
+}
+
+// Test isMainHomebridgeService function
+func TestIsMainHomebridgeService(t *testing.T) {
+	tests := []struct {
+		name    string
+		service HAPService
+		want    bool
+	}{
+		{
+			name: "service with homebridge manufacturer",
+			service: HAPService{
+				Characteristics: []HAPCharacteristic{
+					{Description: "Manufacturer", Value: "homebridge.io"},
+					{Description: testCharDescName, Value: "Test"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "service with homebridge model",
+			service: HAPService{
+				Characteristics: []HAPCharacteristic{
+					{Description: "Model", Value: "homebridge"},
+					{Description: testCharDescName, Value: "Test"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "service without homebridge characteristics",
+			service: HAPService{
+				Characteristics: []HAPCharacteristic{
+					{Description: testCharDescName, Value: "Some Device"},
+					{Description: testCharDescManuf, Value: "Apple"},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "service with no characteristics",
+			service: HAPService{
+				Characteristics: []HAPCharacteristic{},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isMainHomebridgeService(tt.service, "test", testPort)
+			if result != tt.want {
+				t.Errorf("isMainHomebridgeService() = %v, want %v", result, tt.want)
+			}
+		})
+	}
+}
+
+// Test handleManualConfiguration function
+func TestHandleManualConfiguration(t *testing.T) {
+	originalHost := host
+	originalPort := port
+	defer func() {
+		host = originalHost
+		port = originalPort
+	}()
+
+	t.Run("host and port provided", func(t *testing.T) {
+		host = testHostIP
+		port = testPortCustom
+		cmd := createTestCmdWithFlags(testHostIP, strconv.Itoa(testPortCustom))
+
+		gotHost, gotPort := handleManualConfiguration(cmd)
+
+		if gotHost != testHostIP || gotPort != testPortCustom {
+			t.Errorf("handleManualConfiguration() = (%s, %d), want (%s, %d)", gotHost, gotPort, testHostIP, testPortCustom)
+		}
+	})
+
+	t.Run("host only uses default port", func(t *testing.T) {
+		host = testHostIPAlt
+		port = DefaultHomebridgePort
+		cmd := createTestCmdWithFlags(testHostIPAlt, "")
+
+		gotHost, gotPort := handleManualConfiguration(cmd)
+
+		if gotHost != testHostIPAlt || gotPort != DefaultHomebridgePort {
+			t.Errorf("handleManualConfiguration() = (%s, %d), want (%s, %d)",
+				gotHost, gotPort, testHostIPAlt, DefaultHomebridgePort)
+		}
+	})
+
+	t.Run("port only tries discovery for host", func(t *testing.T) {
+		host = ""
+		port = testPortCustom
+		cmd := createTestCmdWithFlags("", strconv.Itoa(testPortCustom))
+
+		gotHost, gotPort := handleManualConfiguration(cmd)
+
+		// Should either discover a host or fall back to localhost
+		if gotPort != testPortCustom {
+			t.Errorf("handleManualConfiguration() port = %d, want %d", gotPort, testPortCustom)
+		}
+		// Host should be either discovered IP or localhost fallback, both are valid
+		if gotHost == "" {
+			t.Errorf("handleManualConfiguration() host = empty, want non-empty host")
+		}
+	})
+}
+
+// Test handleAutoDiscovery function
+func TestHandleAutoDiscovery(t *testing.T) {
+	originalAt3Host := at3Host
+	originalAt3Port := at3Port
+	defer func() {
+		at3Host = originalAt3Host
+		at3Port = originalAt3Port
+	}()
+
+	t.Run("auto discovery with mock cmd", func(t *testing.T) {
+		cmd := createTestCmdWithFlags("", "")
+		gotHost, gotPort := handleAutoDiscovery(cmd)
+
+		// Since we can't mock discoverServices easily, we just test that the function
+		// doesn't panic and returns reasonable values (empty or valid host/port)
+		if gotPort < 0 || gotPort > 65535 {
+			t.Errorf("handleAutoDiscovery() returned invalid port %d", gotPort)
+		}
+
+		// Host should be either empty (discovery failed) or valid hostname/IP
+		if gotHost != "" && len(gotHost) < 3 {
+			t.Errorf("handleAutoDiscovery() returned suspicious host %s", gotHost)
+		}
+	})
+}
+
+// Test reportAWTRIX3Discovery function
+func TestReportAWTRIX3Discovery(t *testing.T) {
+	originalAt3Host := at3Host
+	originalAt3Port := at3Port
+	defer func() {
+		at3Host = originalAt3Host
+		at3Port = originalAt3Port
+	}()
+
+	t.Run("manual AWTRIX3 config", func(_ *testing.T) {
+		at3Host = testHostIP
+		at3Port = DefaultAWTRIX3Port
+		cmd := createTestCmdWithAWTRIXFlags(testHostIP, strconv.Itoa(DefaultAWTRIX3Port))
+
+		awtrixDevices := []MDNSService{}
+
+		// Should not panic and should report manual config
+		reportAWTRIX3Discovery(cmd, awtrixDevices)
+	})
+
+	t.Run("auto-discovered AWTRIX3 devices", func(_ *testing.T) {
+		at3Host = ""
+		at3Port = DefaultAWTRIX3Port
+		cmd := createTestCmdWithAWTRIXFlags("", "")
+
+		awtrixDevices := []MDNSService{
+			{Name: "awtrix_123456", Host: testHostIP, Port: DefaultAWTRIX3Port},
+			{Name: "awtrix_789012", Host: testHostIPAlt, Port: DefaultAWTRIX3Port},
+		}
+
+		// Should not panic and should report discovered devices
+		reportAWTRIX3Discovery(cmd, awtrixDevices)
+	})
+
+	t.Run("no AWTRIX3 devices found", func(_ *testing.T) {
+		at3Host = ""
+		at3Port = DefaultAWTRIX3Port
+		cmd := createTestCmdWithAWTRIXFlags("", "")
+
+		awtrixDevices := []MDNSService{}
+
+		// Should not panic and should report no devices
+		reportAWTRIX3Discovery(cmd, awtrixDevices)
+	})
+}
+
+// Test resolveAWTRIX3Location function
+func TestResolveAWTRIX3Location(t *testing.T) {
+	originalAt3Host := at3Host
+	originalAt3Port := at3Port
+	defer func() {
+		at3Host = originalAt3Host
+		at3Port = originalAt3Port
+	}()
+
+	t.Run("both host and port provided", func(t *testing.T) {
+		at3Host = testHostIP
+		at3Port = testPortCustom
+		cmd := createTestCmdWithAWTRIXFlags(testHostIP, strconv.Itoa(testPortCustom))
+
+		gotHost, gotPort := resolveAWTRIX3Location(cmd)
+
+		if gotHost != testHostIP || gotPort != testPortCustom {
+			t.Errorf("resolveAWTRIX3Location() = (%s, %d), want (%s, %d)", gotHost, gotPort, testHostIP, testPortCustom)
+		}
+	})
+
+	t.Run("host only uses default port", func(t *testing.T) {
+		at3Host = testHostIPAlt
+		at3Port = DefaultAWTRIX3Port
+		cmd := createTestCmdWithAWTRIXFlags(testHostIPAlt, "")
+
+		gotHost, gotPort := resolveAWTRIX3Location(cmd)
+
+		if gotHost != testHostIPAlt || gotPort != DefaultAWTRIX3Port {
+			t.Errorf("resolveAWTRIX3Location() = (%s, %d), want (%s, %d)", gotHost, gotPort, testHostIPAlt, DefaultAWTRIX3Port)
+		}
+	})
+
+	t.Run("port only without host returns empty", func(t *testing.T) {
+		at3Host = ""
+		at3Port = testPortCustom
+		cmd := createTestCmdWithAWTRIXFlags("", strconv.Itoa(testPortCustom))
+
+		gotHost, gotPort := resolveAWTRIX3Location(cmd)
+
+		if gotHost != "" || gotPort != 0 {
+			t.Errorf("resolveAWTRIX3Location() = (%s, %d), want (\"\", 0)", gotHost, gotPort)
+		}
+	})
+
+	t.Run("no manual config returns empty", func(t *testing.T) {
+		at3Host = ""
+		at3Port = DefaultAWTRIX3Port
+		cmd := createTestCmdWithAWTRIXFlags("", "")
+
+		gotHost, gotPort := resolveAWTRIX3Location(cmd)
+
+		if gotHost != "" || gotPort != 0 {
+			t.Errorf("resolveAWTRIX3Location() = (\"\", 0), want (\"\", 0)")
+		}
+	})
+}
+
+// Helper to create cobra command with AWTRIX3 flags
+func createTestCmdWithAWTRIXFlags(hostFlag, portFlag string) *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("at3-host", "", "")
+	cmd.Flags().Int("at3-port", DefaultAWTRIX3Port, "")
+	if hostFlag != "" {
+		_ = cmd.Flags().Set("at3-host", hostFlag)
+	}
+	if portFlag != "" {
+		_ = cmd.Flags().Set("at3-port", portFlag)
+	}
+	return cmd
+}
+
+// Test fetchHAPResponseForValidation error scenarios
+func TestFetchHAPResponseForValidationErrors(t *testing.T) {
+	t.Run("connection timeout", func(t *testing.T) {
+		result, err := fetchHAPResponseForValidation("192.0.2.0", testPortInvalid)
+
+		if err == nil {
+			t.Errorf("fetchHAPResponseForValidation() error = nil, want timeout error")
+		}
+		if result != nil {
+			t.Errorf("fetchHAPResponseForValidation() result = %v, want nil", result)
+		}
+	})
+
+	t.Run("invalid port", func(t *testing.T) {
+		result, err := fetchHAPResponseForValidation("localhost", 99999)
+
+		if err == nil {
+			t.Errorf("fetchHAPResponseForValidation() error = nil, want connection error")
+		}
+		if result != nil {
+			t.Errorf("fetchHAPResponseForValidation() result = %v, want nil", result)
+		}
+	})
+
+	t.Run("non-JSON response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("not json"))
+		}))
+		defer server.Close()
+
+		host, port := extractHostPort(server.URL)
+		result, err := fetchHAPResponseForValidation(host, port)
+
+		if err == nil {
+			t.Errorf("fetchHAPResponseForValidation() error = nil, want JSON parse error")
+		}
+		if result != nil {
+			t.Errorf("fetchHAPResponseForValidation() result = %v, want nil", result)
+		}
+	})
+}
+
+// Test discoverServices behavior (basic smoke test)
+func TestDiscoverServicesBasic(t *testing.T) {
+	t.Run("discoverServices doesn't panic", func(t *testing.T) {
+		// This is a basic smoke test to ensure discoverServices doesn't panic
+		// We can't easily mock the mDNS discovery without complex setup
+		host, awtrixServices := discoverServices()
+
+		// Either discovery succeeds (returns host) or fails (returns empty)
+		// Both are valid outcomes depending on network conditions
+		if host != "" {
+			t.Logf("Discovery succeeded: found host %s", host)
+		} else {
+			t.Logf("Discovery failed or no services found (expected in test env)")
+		}
+
+		// awtrixServices should never be nil, even if empty
+		if awtrixServices == nil {
+			t.Errorf("discoverServices() awtrixServices = nil, want empty slice")
+		}
+	})
+}
+
+// Test main function (wrapper test)
+func TestMain(t *testing.T) {
+	// Test that main function can be called without panicking
+	// We can't easily test the full CLI execution without complex setup
+	t.Run("main function exists and doesn't panic immediately", func(t *testing.T) {
+		// This tests that the main function structure is valid
+		// Actual CLI testing would require integration tests
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("main() panicked: %v", r)
+			}
+		}()
+
+		// We can't call main() directly as it would start the full application
+		// Instead verify the cobra command structure is valid
+		if rootCmd == nil {
+			t.Errorf("rootCmd is nil, command not properly initialized")
+		}
+		if rootCmd.Use != "hb-clog" {
+			t.Errorf("rootCmd.Use = %s, want 'hb-clog'", rootCmd.Use)
+		}
+	})
+}
+
+// Test runMonitor function components
+func TestRunMonitorComponents(t *testing.T) {
+	t.Run("runMonitor validates configuration", func(t *testing.T) {
+		// Test the validation logic that runMonitor would perform
+		// We test the components rather than the full function
+
+		// Test resolveHomebridgeLocation with empty configuration
+		cmd := &cobra.Command{}
+		cmd.Flags().StringP("hb-host", "H", "", "")
+		cmd.Flags().IntP("hb-port", "P", DefaultHomebridgePort, "")
+		cmd.Flags().BoolP("main", "m", false, "")
+
+		// This should attempt auto-discovery
+		resolvedHost, resolvedPort := resolveHomebridgeLocation(cmd)
+
+		// In test environment, discovery will likely fail
+		// Both outcomes are valid depending on network conditions
+		if resolvedHost != "" {
+			t.Logf("Auto-discovery succeeded: %s:%d", resolvedHost, resolvedPort)
+		} else {
+			t.Logf("Auto-discovery failed (expected in test environment)")
+		}
+	})
+}
+
+// Test performDiscovery function wrapper
+func TestPerformDiscoveryWrapper(t *testing.T) {
+	t.Run("performDiscovery doesn't panic with valid inputs", func(t *testing.T) {
+		// Test that the discovery wrapper function handles nil inputs properly
+		var cachedChildBridges []ChildBridge
+		var cachedHAPServices []HAPAccessory
+
+		// Should not panic with valid empty inputs
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("performDiscovery() panicked: %v", r)
+			}
+		}()
+
+		performDiscovery(&cachedChildBridges, &cachedHAPServices)
+	})
+}
+
+// Test bridge filtering functions
+func TestBridgeFilteringFunctions(t *testing.T) {
+	// Create test HAP services for filtering
+	testHAPServices := []HAPAccessory{
+		{Name: "Homebridge ABCD EFGH", Host: "192.168.1.100", Port: testBridgePort1, ID: "1"}, // Main bridge - should be filtered
+		{Name: "TplinkSmarthome", Host: "192.168.1.101", Port: testBridgePort2, ID: "2"},      // Child bridge
+		{Name: "Some Other Device", Host: "192.168.1.102", Port: testBridgePort3, ID: "3"},    // Other device
+	}
+
+	t.Run("filterKnownChildBridges removes main bridge", func(t *testing.T) {
+		// Test that main Homebridge instances are filtered out
+		filtered := filterKnownChildBridges(testHAPServices, []ChildBridge{})
+
+		// Should have filtered out the "Homebridge ABCD EFGH" service
+		for _, service := range filtered {
+			if strings.HasPrefix(service.Name, "Homebridge ") && len(strings.Fields(service.Name)) == 3 {
+				t.Errorf("filterKnownChildBridges() did not filter main bridge: %s", service.Name)
+			}
+		}
+	})
+
+	t.Run("isKnownChildBridge identifies main vs child bridges", func(t *testing.T) {
+		childBridges := []ChildBridge{
+			{Name: "TplinkSmarthome"},
+		}
+
+		mainBridge := HAPAccessory{Name: "Homebridge ABCD EFGH", Host: "192.168.1.100", Port: testBridgePort1, ID: "1"}
+		childBridge := HAPAccessory{Name: "TplinkSmarthome", Host: "192.168.1.101", Port: testBridgePort2, ID: "2"}
+
+		// Should identify main bridge as NOT a child bridge
+		if isKnownChildBridge(mainBridge, childBridges) {
+			t.Errorf("isKnownChildBridge() = true for main bridge, want false")
+		}
+
+		// Should identify valid child bridge
+		if !isKnownChildBridge(childBridge, childBridges) {
+			t.Errorf("isKnownChildBridge() = false for child bridge, want true")
+		}
+	})
+}
+
+// Test HAP monitoring wrapper functions
+func TestHAPMonitoringWrappers(t *testing.T) {
+	t.Run("HAP monitoring functions don't panic with valid inputs", func(t *testing.T) {
+		// Test that HAP monitoring functions handle basic inputs properly
+		var childBridges []ChildBridge
+		var hapServices []HAPAccessory
+		bridgeStatusMap := make(map[string]map[string]interface{})
+
+		// Should not panic with valid empty inputs
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("HAP monitoring functions panicked: %v", r)
+			}
+		}()
+
+		// Test these functions don't panic (they don't return values we can easily test)
+		checkAllBridgesOptimized(bridgeStatusMap, &childBridges, &hapServices, false)
+		checkAllBridgesOptimizedWithRetry(bridgeStatusMap, &childBridges, &hapServices, false, 1)
+	})
+}
+
+// Test discovery cache wrapper functions
+func TestDiscoveryCacheWrappers(t *testing.T) {
+	t.Run("cache functions don't panic with valid inputs", func(t *testing.T) {
+		// Test that cache functions handle basic inputs properly
+		var childBridges []ChildBridge
+		var hapServices []HAPAccessory
+		childBridgeList := []ChildBridge{{Name: "TestBridge"}}
+		hapServiceList := []HAPAccessory{{Name: "TestService", Host: "localhost", Port: 80, ID: "1"}}
+
+		// Should not panic with valid inputs
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Cache functions panicked: %v", r)
+			}
+		}()
+
+		// Test these functions don't panic
+		updateDiscoveryCache(&childBridges, &hapServices, childBridgeList, hapServiceList)
+		displaydiscoveryResults(childBridgeList, hapServiceList)
+	})
+}
+
+// Test utility functions for service discovery
+func TestServiceDiscoveryUtilities(t *testing.T) {
+	t.Run("trimServiceName handles various inputs", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			input  string
+			expect string
+		}{
+			{"single field service", "TestService._hap._tcp.local.", "TestService._hap._tcp.local."},
+			{"multi word service", "Test Service Name suffix", "Test Service Name"},
+			{"single word", "TestService", "TestService"},
+			{"empty string", "", ""},
+			{"two words", "Test Service", "Test"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := trimServiceName(tt.input)
+				if result != tt.expect {
+					t.Errorf("trimServiceName(%s) = %s, want %s", tt.input, result, tt.expect)
+				}
+			})
+		}
+	})
+
+	t.Run("testCachedServicesReachability validates services", func(t *testing.T) {
+		testServices := []HAPAccessory{
+			{Name: "TestService1", Host: "localhost", Port: 80, ID: "1"},
+			{Name: "TestService2", Host: "nonexistent.invalid", Port: 9999, ID: "2"},
+		}
+
+		unreachableServices := testCachedServicesReachability(testServices)
+
+		// Should return a slice (possibly empty)
+		if unreachableServices == nil {
+			t.Errorf("testCachedServicesReachability() = nil, want non-nil slice")
+		}
+	})
+}
+
+// Test mDNS service filtering - empty services
+func TestServiceFilteringEmpty(t *testing.T) {
+	client := NewMDNSClient(testTimeout5s)
+	emptyResult := client.filterServicesForLookup([]string{}, []string{})
+	if len(emptyResult) != 0 {
+		t.Errorf("filterServicesForLookup([]) = %d services, want 0", len(emptyResult))
+	}
+}
+
+// Test mDNS service filtering - with services
+func TestServiceFilteringWithServices(t *testing.T) {
+	client := NewMDNSClient(testTimeout5s)
+	serviceNames := []string{"TestService1", "TestService2", "TestService3"}
+	expectedNames := []string{"TestService1", "TestService3"}
+	result := client.filterServicesForLookup(serviceNames, expectedNames)
+
+	// Should return slice of same or smaller length
+	if len(result) > len(serviceNames) {
+		t.Errorf("filterServicesForLookup() returned more services than input: got %d, want <= %d",
+			len(result), len(serviceNames))
+	}
+
+	// All returned names should be from original list
+	for _, returned := range result {
+		found := false
+		for _, original := range serviceNames {
+			if returned == original {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("filterServicesForLookup() returned unexpected service: %s", returned)
+		}
 	}
 }

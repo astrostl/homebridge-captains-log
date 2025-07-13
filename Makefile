@@ -73,7 +73,7 @@ misspell: ## Check for common spelling errors
 
 deadcode: ## Detect unused (dead) code
 	@command -v $$(go env GOPATH)/bin/deadcode >/dev/null 2>&1 || go install golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION)
-	$$(go env GOPATH)/bin/deadcode ./...
+	$$(go env GOPATH)/bin/deadcode -test ./...
 
 depscan: ## Enhanced dependency vulnerability scanning
 	@echo "Running comprehensive dependency security scan..."

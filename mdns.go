@@ -325,6 +325,10 @@ func (*MDNSClient) logLookupResult(serviceName string, service *MDNSService) {
 
 // parseServiceResponseForType extracts service details from a DNS response for any service type
 func (c *MDNSClient) parseServiceResponseForType(response *dnsmessage.Message, serviceName, serviceType string) *MDNSService {
+	if response == nil {
+		return nil
+	}
+
 	service := &MDNSService{
 		Name:       serviceName,
 		TXTRecords: make(map[string]string),

@@ -17,6 +17,23 @@ The tool has two binary names depending on installation method:
 - Only mention the long name when explaining `go install` behavior
 - All other documentation, examples, and references should use the short name
 
+## Auto-Discovery Features (v0.3.0+)
+
+**Zero Configuration by Default:**
+- Tool automatically discovers Homebridge main instance via mDNS + HAP verification
+- AWTRIX3 devices auto-discovered via `_awtrix._tcp` service type
+- Manual configuration overrides auto-discovery for compatibility
+- Concurrent discovery using goroutines for improved performance
+
+**Discovery Precedence:**
+1. CLI flags (`--hb-host`, `--at3-host`) - highest priority
+2. Environment variables (`CLOG_HB_HOST`, `CLOG_AT3_HOST`) 
+3. Auto-discovery via mDNS - fallback when manual config not provided
+
+**Critical Path Behavior:**
+- Homebridge discovery failure causes tool exit (required for core functionality)
+- AWTRIX3 discovery failure allows tool to continue (optional feature)
+
 ## Environment Configuration
 
 For testing, a `.env` file contains the Homebridge and AWTRIX3 configuration using CLOG_ prefix:
