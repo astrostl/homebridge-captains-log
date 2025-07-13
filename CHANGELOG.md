@@ -5,7 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.2] - 2025-07-13
+## [0.3.3] - 2025-07-13
+
+### Fixed
+- **Go module path** - Corrected module path from `homebridge-captains-log` to `github.com/astrostl/homebridge-captains-log` for proper Go module proxy support
 
 ### Added
 - **Repository documentation** - Added CODE_OF_CONDUCT.md, CONTRIBUTING.md, LICENSE, and SECURITY.md
@@ -20,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Development
 - **Repository maintenance** - Removed tracked build artifacts and improved repository hygiene
 - **Project governance** - Added community health files for better project management
+
+## [0.3.2] - 2025-07-13
+
+### Note
+This version had an incorrect Go module path and has been superseded by v0.3.3.
 
 ## [0.3.1] - 2025-07-13
 
