@@ -19,10 +19,12 @@ The tool has two binary names depending on installation method:
 
 ## Environment Configuration
 
-For testing, a `.env` file contains the Homebridge configuration using CLOG_ prefix:
+For testing, a `.env` file contains the Homebridge and AWTRIX3 configuration using CLOG_ prefix:
 - `CLOG_HB_HOST=192.168.50.242`
 - `CLOG_HB_PORT=8581`
 - `CLOG_HB_TOKEN=your_auth_token_here`
+- `CLOG_AT3_HOST=192.168.50.156`
+- `CLOG_AT3_PORT=80`
 
 The `.env` file is gitignored to prevent committing local configuration.
 
@@ -40,6 +42,13 @@ Source code: https://github.com/homebridge/homebridge-config-ui-x
 AWTRIX3 LED matrix display API documentation stored in `ref/awtrix3-api.md` for reference.
 
 **Hardware**: Ulanzi TC001 - 32x8 pixel LED matrix (verified via corner pixel testing)
+
+**Auto-Discovery**: AWTRIX3 devices advertise themselves via mDNS service discovery using `_awtrix._tcp` service type. Discovery includes:
+- Service name pattern: `awtrix_XXXXXX` (where XXXXXX is device identifier)
+- Default port: 80
+- TXT records: `type=awtrix3`, `name=device_name`, `id=device_id`
+- Automatic hostname to IP resolution
+- Example discovered device: `awtrix_7bd16c.local:80` → `192.168.50.156:80`
 
 **Screen Capture**: Can retrieve current display state via `curl http://[IP]/api/screen` - returns 256-element array of RGB values for analysis
 

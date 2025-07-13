@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,6 +48,10 @@ var (
 	token    string
 	useHAP   bool
 	debug    bool
+	
+	// AWTRIX3 configuration
+	at3Host string
+	at3Port int
 )
 
 // Timeout Configuration - All timeouts used throughout the application
@@ -127,6 +132,10 @@ func init() {
 	defaultHost := getEnvOrDefault("CLOG_HB_HOST", "")
 	defaultPort := getEnvIntOrDefault("CLOG_HB_PORT", DefaultHomebridgePort)
 	defaultToken := getEnvOrDefault("CLOG_HB_TOKEN", "")
+	
+	// AWTRIX3 configuration
+	defaultAT3Host := getEnvOrDefault("CLOG_AT3_HOST", "")
+	defaultAT3Port := getEnvIntOrDefault("CLOG_AT3_PORT", 80)
 
 	rootCmd.Flags().StringVarP(&host, "host", "H", defaultHost, "Homebridge UI host (auto-discovered if not provided)")
 	rootCmd.Flags().IntVarP(&port, "port", "p", defaultPort, "Homebridge UI port (default: 8581)")
@@ -136,6 +145,10 @@ func init() {
 		"Number of checks to perform (0 = discovery-only, default = infinite)")
 	rootCmd.Flags().StringVarP(&token, "token", "t", defaultToken, "Homebridge UI auth token")
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug output")
+	
+	// AWTRIX3 flags
+	rootCmd.Flags().StringVar(&at3Host, "at3-host", defaultAT3Host, "AWTRIX3 host IP/hostname (auto-discovered if not provided)")
+	rootCmd.Flags().IntVar(&at3Port, "at3-port", defaultAT3Port, "AWTRIX3 port (default: 80)")
 	rootCmd.Flags().BoolP("child-bridges", "b", false, "Also monitor child bridges (deprecated)")
 	rootCmd.Flags().BoolVarP(&useHAP, "hap", "a", true, "Use HAP (HomeKit) protocol to monitor child bridges (default)")
 	rootCmd.Flags().BoolP("main", "m", false, "Monitor main bridge only instead of child bridges")
@@ -221,7 +234,7 @@ func resolveHomebridgeLocation(cmd *cobra.Command) (string, int) {
 			finalPort = DefaultHomebridgePort
 		} else if !hostProvided && portProvided {
 			// Port provided, host not provided - try auto-discovery for host
-			if discoveredHost := discoverHomebridgeHost(); discoveredHost != "" {
+			if discoveredHost, _ := discoverServices(); discoveredHost != "" {
 				finalHost = discoveredHost
 			} else {
 				finalHost = "localhost" // fallback
@@ -232,11 +245,23 @@ func resolveHomebridgeLocation(cmd *cobra.Command) (string, int) {
 		return finalHost, finalPort
 	}
 
-	// No manual configuration - attempt auto-discovery
+	// No manual Homebridge configuration - attempt auto-discovery
 	fmt.Printf("No manual configuration provided, attempting auto-discovery...\n")
-	discoveredHost := discoverHomebridgeHost()
+	discoveredHost, awtrixDevices := discoverServices()
 	if discoveredHost != "" {
 		fmt.Printf("Auto-discovered Homebridge at: %s:%d\n", discoveredHost, DefaultHomebridgePort)
+		
+		// Check for manual AWTRIX3 configuration or use discovered devices
+		awtrix3Host, awtrix3Port := resolveAWTRIX3Location(cmd)
+		if awtrix3Host != "" {
+			fmt.Printf("Using manual AWTRIX3 at: %s:%d\n", awtrix3Host, awtrix3Port)
+		} else if len(awtrixDevices) > 0 {
+			for _, device := range awtrixDevices {
+				fmt.Printf("Auto-discovered AWTRIX3 at: %s:%d\n", device.Host, device.Port)
+			}
+		} else {
+			fmt.Printf("No AWTRIX3 devices found\n")
+		}
 		return discoveredHost, DefaultHomebridgePort
 	}
 
@@ -244,34 +269,132 @@ func resolveHomebridgeLocation(cmd *cobra.Command) (string, int) {
 	return "", 0
 }
 
-// discoverHomebridgeHost discovers the main Homebridge instance via mDNS and HAP verification
-func discoverHomebridgeHost() string {
-	debugf("Starting auto-discovery of main Homebridge instance\n")
+// resolveAWTRIX3Location determines if manual AWTRIX3 configuration is provided
+// Returns empty host if no manual configuration is found
+func resolveAWTRIX3Location(cmd *cobra.Command) (string, int) {
+	// Check if AWTRIX3 host was manually provided (CLI flag or env var)
+	at3HostProvided := cmd.Flags().Changed("at3-host") || os.Getenv("CLOG_AT3_HOST") != ""
+	at3PortProvided := cmd.Flags().Changed("at3-port") || os.Getenv("CLOG_AT3_PORT") != ""
 	
-	// Use custom mDNS to discover all Homebridge services
+	if at3HostProvided || at3PortProvided {
+		finalHost := at3Host
+		finalPort := at3Port
+		
+		// If only host provided, use default port
+		if at3HostProvided && !at3PortProvided {
+			finalPort = 80
+		} else if !at3HostProvided && at3PortProvided {
+			// Port provided but no host - cannot use manual config
+			return "", 0
+		}
+		
+		return finalHost, finalPort
+	}
+	
+	return "", 0
+}
+
+// discoverServices discovers the main Homebridge instance and AWTRIX devices via mDNS concurrently
+func discoverServices() (string, []MDNSService) {
+	debugf("Starting concurrent auto-discovery of services\n")
+	
 	client := NewMDNSClient(TimeoutConfig.MDNSTotal)
 	ctx := context.Background()
 	
-	mdnsServices, err := client.DiscoverHomebridgeServices(ctx)
-	if err != nil {
-		debugf("mDNS discovery failed: %v\n", err)
-		return ""
+	// Channels for goroutine communication
+	type homebridgeResult struct {
+		services []MDNSService
+		err      error
+	}
+	type awtrixResult struct {
+		services []MDNSService
+		err      error
 	}
 	
+	homebridgeChan := make(chan homebridgeResult, 1)
+	awtrixChan := make(chan awtrixResult, 1)
+	
+	// Launch Homebridge discovery goroutine (CRITICAL)
+	go func() {
+		debugf("Starting Homebridge discovery goroutine\n")
+		services, err := client.DiscoverHomebridgeServices(ctx)
+		homebridgeChan <- homebridgeResult{services: services, err: err}
+	}()
+	
+	// Launch AWTRIX discovery goroutine (OPTIONAL)
+	go func() {
+		debugf("Starting AWTRIX discovery goroutine\n")
+		services, err := client.DiscoverAWTRIXServices(ctx)
+		awtrixChan <- awtrixResult{services: services, err: err}
+	}()
+	
+	// Wait for both discoveries to complete
+	var mdnsServices []MDNSService
+	var awtrixServices []MDNSService
+	
+	// Get Homebridge results (CRITICAL - die if this fails)
+	homebridgeRes := <-homebridgeChan
+	if homebridgeRes.err != nil {
+		debugf("CRITICAL: Homebridge discovery failed: %v\n", homebridgeRes.err)
+		log.Fatalf("Failed to discover Homebridge services: %v", homebridgeRes.err)
+	}
+	mdnsServices = homebridgeRes.services
 	debugf("Found %d Homebridge services via mDNS\n", len(mdnsServices))
 	
-	// Test each service to find the main Homebridge instance
+	// Get AWTRIX results (OPTIONAL - continue if this fails)
+	awtrixRes := <-awtrixChan
+	if awtrixRes.err != nil {
+		debugf("AWTRIX discovery failed (non-critical): %v\n", awtrixRes.err)
+		awtrixServices = nil
+	} else {
+		awtrixServices = awtrixRes.services
+		debugf("Found %d AWTRIX devices via mDNS\n", len(awtrixServices))
+		for _, service := range awtrixServices {
+			debugf("AWTRIX device: %s at %s:%d\n", service.Name, service.Host, service.Port)
+		}
+	}
+	
+	// Test each Homebridge service to find the main instance
 	for _, service := range mdnsServices {
 		debugf("Testing service: %s at %s:%d\n", service.Name, service.Host, service.Port)
 		
 		if isMainHomebridgeInstance(service.Host, service.Port) {
 			debugf("Confirmed main Homebridge instance: %s\n", service.Host)
-			return service.Host
+			// Resolve hostname to IP if needed
+			resolvedHost := resolveHostnameToIP(service.Host)
+			return resolvedHost, awtrixServices
 		}
 	}
 	
-	debugf("No main Homebridge instance found among discovered services\n")
-	return ""
+	// CRITICAL: If no main Homebridge instance found, die
+	log.Fatalf("No main Homebridge instance found among %d discovered services", len(mdnsServices))
+	return "", awtrixServices // This line won't be reached due to log.Fatalf
+}
+
+// resolveHostnameToIP resolves a hostname to IP address using standard DNS lookup
+func resolveHostnameToIP(hostname string) string {
+	// If it's already an IP address, return as-is
+	if net.ParseIP(hostname) != nil {
+		return hostname
+	}
+	
+	// Try to resolve hostname to IP
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		debugf("Failed to resolve hostname %s: %v\n", hostname, err)
+		return hostname // Return original hostname if resolution fails
+	}
+	
+	// Return the first IPv4 address found
+	for _, ip := range ips {
+		if ipv4 := ip.To4(); ipv4 != nil {
+			debugf("Resolved hostname %s to IP: %s\n", hostname, ipv4.String())
+			return ipv4.String()
+		}
+	}
+	
+	debugf("No IPv4 address found for hostname %s\n", hostname)
+	return hostname // Return original hostname if no IPv4 found
 }
 
 // isMainHomebridgeInstance checks if the given HAP service is the main Homebridge instance

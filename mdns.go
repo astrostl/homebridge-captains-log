@@ -224,7 +224,7 @@ func (c *MDNSClient) LookupService(_ context.Context, serviceName, serviceType s
 		return nil, err
 	}
 
-	service := c.collectLookupResponses(conn, serviceName)
+	service := c.collectLookupResponses(conn, serviceName, serviceType)
 	c.logLookupResult(serviceName, service)
 	return service, nil
 }
@@ -279,18 +279,18 @@ func createLookupMessage(fullName string) dnsmessage.Message {
 	return msg
 }
 
-func (c *MDNSClient) collectLookupResponses(conn *net.UDPConn, serviceName string) *MDNSService {
+func (c *MDNSClient) collectLookupResponses(conn *net.UDPConn, serviceName, serviceType string) *MDNSService {
 	var service *MDNSService
 	deadline := time.Now().Add(TimeoutConfig.MDNSLookupPerService)
 
 	for time.Now().Before(deadline) && service == nil {
-		service = c.attemptLookupResponse(conn, serviceName)
+		service = c.attemptLookupResponse(conn, serviceName, serviceType)
 	}
 
 	return service
 }
 
-func (c *MDNSClient) attemptLookupResponse(conn *net.UDPConn, serviceName string) *MDNSService {
+func (c *MDNSClient) attemptLookupResponse(conn *net.UDPConn, serviceName, serviceType string) *MDNSService {
 	if err := conn.SetReadDeadline(time.Now().Add(TimeoutConfig.MDNSReadTimeout)); err != nil {
 		return nil
 	}
@@ -312,7 +312,7 @@ func (c *MDNSClient) attemptLookupResponse(conn *net.UDPConn, serviceName string
 		return nil
 	}
 
-	return c.parseServiceResponse(&response, serviceName)
+	return c.parseServiceResponseForType(&response, serviceName, serviceType)
 }
 
 func (*MDNSClient) logLookupResult(serviceName string, service *MDNSService) {
@@ -323,14 +323,14 @@ func (*MDNSClient) logLookupResult(serviceName string, service *MDNSService) {
 	}
 }
 
-// parseServiceResponse extracts service details from a DNS response
-func (c *MDNSClient) parseServiceResponse(response *dnsmessage.Message, serviceName string) *MDNSService {
+// parseServiceResponseForType extracts service details from a DNS response for any service type
+func (c *MDNSClient) parseServiceResponseForType(response *dnsmessage.Message, serviceName, serviceType string) *MDNSService {
 	service := &MDNSService{
 		Name:       serviceName,
 		TXTRecords: make(map[string]string),
 	}
 
-	expectedName := serviceName + "._hap._tcp.local."
+	expectedName := serviceName + "." + serviceType + ".local."
 
 	c.parseAnswerRecords(response.Answers, service, expectedName)
 	c.resolveHostToIP(response.Additionals, service)
@@ -340,6 +340,11 @@ func (c *MDNSClient) parseServiceResponse(response *dnsmessage.Message, serviceN
 	}
 
 	return nil
+}
+
+// parseServiceResponse extracts service details from a DNS response (HAP compatibility)
+func (c *MDNSClient) parseServiceResponse(response *dnsmessage.Message, serviceName string) *MDNSService {
+	return c.parseServiceResponseForType(response, serviceName, "_hap._tcp")
 }
 
 func (c *MDNSClient) parseAnswerRecords(answers []dnsmessage.Resource, service *MDNSService, expectedName string) {
@@ -621,6 +626,34 @@ func (c *MDNSClient) lookupServiceWithRetries(ctx context.Context, serviceName, 
 
 	debugf("Failed to lookup service %s after 3 attempts - giving up\n", serviceName)
 	return nil
+}
+
+// DiscoverAWTRIXServices discovers all AWTRIX LED matrix devices via mDNS
+func (c *MDNSClient) DiscoverAWTRIXServices(ctx context.Context) ([]MDNSService, error) {
+	debugf("Starting AWTRIX service discovery\n")
+
+	serviceNames, err := c.BrowseServicesWithEarlyCompletion(ctx, "_awtrix._tcp", 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to browse AWTRIX services: %w", err)
+	}
+
+	debugf("Found %d _awtrix._tcp services to examine\n", len(serviceNames))
+
+	var awtrixServices []MDNSService
+	for _, serviceName := range serviceNames {
+		service, err := c.LookupService(ctx, serviceName, "_awtrix._tcp")
+		if err != nil {
+			debugf("Failed to lookup AWTRIX service %s: %v\n", serviceName, err)
+			continue
+		}
+		if service != nil {
+			debugf("Found AWTRIX device: %s at %s:%d\n", service.Name, service.Host, service.Port)
+			awtrixServices = append(awtrixServices, *service)
+		}
+	}
+
+	debugf("Discovery completed, found %d AWTRIX devices\n", len(awtrixServices))
+	return awtrixServices, nil
 }
 
 // filterServicesByExpectedNames filters mDNS service names to only include those that match expected child bridge names
