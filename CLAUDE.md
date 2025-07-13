@@ -91,6 +91,49 @@ curl -X POST http://192.168.50.242:8581/api/auth/noauth
 curl -H "Authorization: Bearer YOUR_TOKEN_HERE" http://192.168.50.242:8581/api/status/homebridge/child-bridges
 ```
 
+## Go Module Proxy and External Tools
+
+**Waking Up the Go Module Proxy:**
+
+After creating a new release, external tools like Go Report Card may show errors about not being able to download the module. This happens because the Go module proxy (proxy.golang.org) needs to be "awakened" to cache the new version.
+
+**Steps to wake up the module proxy:**
+
+1. **Install the specific version** to trigger proxy caching:
+   ```bash
+   go install github.com/astrostl/homebridge-captains-log@v0.3.3
+   ```
+
+2. **Clear local cache and reinstall** to force proxy refresh:
+   ```bash
+   go clean -modcache
+   go install github.com/astrostl/homebridge-captains-log@latest
+   ```
+
+3. **Use direct proxy bypass** if needed:
+   ```bash
+   GOPROXY=direct go install github.com/astrostl/homebridge-captains-log@latest
+   ```
+
+4. **Verify proxy status** using curl:
+   ```bash
+   # Check latest version
+   curl -s "https://proxy.golang.org/github.com/astrostl/homebridge-captains-log/@latest"
+   
+   # Check all available versions
+   curl -s "https://proxy.golang.org/github.com/astrostl/homebridge-captains-log/@v/list"
+   ```
+
+**Common Issues:**
+- **Module path conflicts**: If you've fixed a module path (like we did in v0.3.3), the proxy may take time to update @latest
+- **Cache delays**: The proxy can take 5-10 minutes to recognize new releases
+- **Tool compatibility**: Some tools may need the specific version (e.g., `@v0.3.3`) instead of `@latest`
+
+**For Go Report Card:**
+If the report card shows download errors, try submitting:
+- `github.com/astrostl/homebridge-captains-log@v0.3.3` (specific version)
+- Wait 10-15 minutes and try `github.com/astrostl/homebridge-captains-log` again
+
 ## Build and Run
 
 ### Tool Version Pinning
