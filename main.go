@@ -457,7 +457,6 @@ func runHAPMonitor(maxChecks int) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
-	fmt.Println("HAP monitor running... Press Ctrl+C to stop")
 
 	for {
 		select {
@@ -482,7 +481,7 @@ func checkAllBridgesOptimized(bridgeStatusMap map[string]map[string]interface{},
 }
 
 func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]interface{}, cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory, forceFullDiscovery bool, attempt int) {
-	currentChildBridges, hapServices := discoverBridges(cachedChildBridges, cachedHAPServices, forceFullDiscovery)
+	currentChildBridges, hapServices, usedCache := discoverBridges(cachedChildBridges, cachedHAPServices, forceFullDiscovery)
 	
 	if len(currentChildBridges) == 0 {
 		fmt.Println("No child bridges found in API.")
@@ -504,8 +503,11 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 		}
 	}
 
-	// Show discovery results on first attempt or when forced
-	if attempt == 1 || forceFullDiscovery {
+	// Show discovery results based on whether we used cache or did full discovery
+	if usedCache {
+		fmt.Println()
+		fmt.Println("Using cached bridge configuration (no changes detected)")
+	} else {
 		displayDiscoveryResults(currentChildBridges, hapServices)
 	}
 
@@ -547,6 +549,7 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 	// Wait for all goroutines to complete
 	wg.Wait()
 
+
 	if bridgesWithAccessories == 0 {
 		fmt.Println("No HAP services with accessories found.")
 		fmt.Println("Note: Services may only have read-only sensors or no controllable accessories.")
@@ -557,22 +560,23 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 
 // performDiscovery performs bridge discovery and outputs results consistently
 func performDiscovery(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory) {
-	currentChildBridges, finalServices := discoverBridges(cachedChildBridges, cachedHAPServices, true)
+	currentChildBridges, finalServices, _ := discoverBridges(cachedChildBridges, cachedHAPServices, true)
 	displayDiscoveryResults(currentChildBridges, finalServices)
 }
 
 // discoverBridges performs the actual discovery logic, returns bridges and services
-func discoverBridges(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory, forceFullDiscovery bool) ([]ChildBridge, []HAPAccessory) {
+func discoverBridges(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory, forceFullDiscovery bool) ([]ChildBridge, []HAPAccessory, bool) {
 	// Get known child bridges from API first
 	currentChildBridges := getChildBridges()
 	if len(currentChildBridges) == 0 {
 		debugf("No child bridges found in API\n")
-		return currentChildBridges, []HAPAccessory{}
+		return currentChildBridges, []HAPAccessory{}, false
 	}
 	debugf("Found %d child bridges from API\n", len(currentChildBridges))
 
 	var finalServices []HAPAccessory
 	needsFullDiscovery := forceFullDiscovery
+	usedCache := false
 
 	// Check if this is initial discovery or if child bridge list has changed
 	if !forceFullDiscovery && len(*cachedChildBridges) > 0 {
@@ -592,6 +596,7 @@ func discoverBridges(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAP
 			} else {
 				debugf("All cached services reachable, using cached discovery\n")
 				finalServices = *cachedHAPServices
+				usedCache = true
 			}
 		}
 	}
@@ -622,7 +627,7 @@ func discoverBridges(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAP
 	*cachedChildBridges = currentChildBridges
 	*cachedHAPServices = finalServices
 	
-	return currentChildBridges, finalServices
+	return currentChildBridges, finalServices, usedCache
 }
 
 // displayDiscoveryResults shows the consistent discovery output

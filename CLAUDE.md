@@ -63,7 +63,12 @@ go install github.com/mgechev/revive@latest  # Test latest before updating Makef
 
 Update the version variables in the Makefile after testing, then run `make deps` to install updated tools.
 
-### Using Makefile (Recommended)
+### Using Makefile (REQUIRED)
+
+**🚨 CRITICAL: ALWAYS use the Makefile for building - NEVER use `go build` directly**
+- The binary must be named `hb-clog` (not the default module name)
+- Only `make build` ensures correct binary naming and output
+- Using `go build` creates the wrong binary name and causes confusion
 
 ```bash
 make all          # Full build pipeline (quality + test + build)
@@ -91,10 +96,16 @@ make deps         # Install all development tools
 make help         # Show all available targets
 ```
 
-### Manual Build
+### Manual Build (DEPRECATED - DO NOT USE)
+
+**❌ NEVER use manual `go build` commands - ALWAYS use `make build`**
 
 ```bash
-go build -o hb-clog
+# WRONG - DO NOT USE:
+# go build -o hb-clog
+
+# CORRECT - ALWAYS USE:
+make build
 ./hb-clog         # Default: monitors all child bridges via HAP
 ./hb-clog --main  # Monitor main bridge only (instead of child bridges)
 ./hb-clog -d      # Enable debug output 
@@ -116,16 +127,22 @@ Example: `./hb-clog -d -i 2s`
 ## Testing
 
 ### Claude Testing
+**🚨 CRITICAL: ALWAYS build with `make build` before testing**
+
 Claude can run the binary directly to test functionality:
 ```bash
+make build         # REQUIRED: Build correct binary first
 ./hb-clog -d -c 0  # Debug mode, discovery-only (fastest test)
 ./hb-clog -d -c 1  # Debug mode, single check
 ./hb-clog -c 2     # Two checks then exit
 ```
 
 ### Manual Testing
+**🚨 CRITICAL: ALWAYS build with `make build` before testing**
+
 When debugging or testing, always use the count flag to limit runs:
 ```bash
+make build                  # REQUIRED: Build correct binary first
 ./hb-clog -c 0              # Discovery-only mode (fastest test)
 ./hb-clog -d -c 2 -i 5s     # Debug mode, 2 checks, 5 second intervals
 ./hb-clog -c 1              # Single check then exit
