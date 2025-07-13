@@ -50,5 +50,9 @@ deps-graph.txt
 .Trashes
 
 # Go coverage files
-coverage.out
-coverage.html
+coverage*.out
+coverage*.html
+
+# Test output and logs
+test_output.log
+*.log

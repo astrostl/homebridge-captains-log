@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2025-07-13
+
+### Added
+- **Repository documentation** - Added CODE_OF_CONDUCT.md, CONTRIBUTING.md, LICENSE, and SECURITY.md
+- **GitHub repository setup** - Issue templates, funding configuration, and dependabot setup
+- **Animated demo GIF** showcasing AWTRIX3 display integration with realistic output example
+- **Enhanced README** with improved examples and better presentation
+
+### Changed
+- **Repository cleanup** - Improved .gitignore to properly exclude build artifacts and logs
+- **Documentation organization** - Better structured project documentation and contribution guidelines
+
+### Development
+- **Repository maintenance** - Removed tracked build artifacts and improved repository hygiene
+- **Project governance** - Added community health files for better project management
+
 ## [0.3.1] - 2025-07-13
 
 ### Added
