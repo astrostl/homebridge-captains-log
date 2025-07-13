@@ -137,8 +137,8 @@ func init() {
 	defaultAT3Host := getEnvOrDefault("CLOG_AT3_HOST", "")
 	defaultAT3Port := getEnvIntOrDefault("CLOG_AT3_PORT", 80)
 
-	rootCmd.Flags().StringVarP(&host, "host", "H", defaultHost, "Homebridge UI host (auto-discovered if not provided)")
-	rootCmd.Flags().IntVarP(&port, "port", "p", defaultPort, "Homebridge UI port (default: 8581)")
+	rootCmd.Flags().StringVarP(&host, "hb-host", "H", defaultHost, "Homebridge UI host (auto-discovered if not provided)")
+	rootCmd.Flags().IntVarP(&port, "hb-port", "p", defaultPort, "Homebridge UI port (default: 8581)")
 	rootCmd.Flags().DurationVarP(&interval, "interval", "i", TimeoutConfig.DefaultPollingInterval,
 		"Polling interval (duration format: 3s, 30s, 1m, etc.)")
 	rootCmd.Flags().IntVarP(&count, "count", "c", -1,
@@ -220,8 +220,8 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 // Manual configuration (CLI flags or env vars) takes precedence over auto-discovery
 func resolveHomebridgeLocation(cmd *cobra.Command) (string, int) {
 	// Check if host was manually provided (CLI flag or env var)
-	hostProvided := cmd.Flags().Changed("host") || os.Getenv("CLOG_HB_HOST") != ""
-	portProvided := cmd.Flags().Changed("port") || os.Getenv("CLOG_HB_PORT") != ""
+	hostProvided := cmd.Flags().Changed("hb-host") || os.Getenv("CLOG_HB_HOST") != ""
+	portProvided := cmd.Flags().Changed("hb-port") || os.Getenv("CLOG_HB_PORT") != ""
 
 	if hostProvided || portProvided {
 		// Manual configuration provided - use it
