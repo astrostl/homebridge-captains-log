@@ -320,14 +320,13 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 	var servicesToLookup []string
 	if expectedNames != nil && len(expectedNames) > 0 {
 		servicesToLookup = filterServicesByExpectedNames(serviceNames, expectedNames)
-		fmt.Printf("Filtered to %d services that might match expected child bridges\n", len(servicesToLookup))
+		fmt.Printf("(filtered to %d ✅)\n", len(servicesToLookup))
 		debugf("Services to lookup: %v\n", servicesToLookup)
 	} else {
 		servicesToLookup = serviceNames
 	}
 
 	// Phase 2: Parallel lookups (7 additional seconds)
-	fmt.Printf("Starting parallel lookups for %d services...\n", len(servicesToLookup))
 	lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer lookupCancel()
 

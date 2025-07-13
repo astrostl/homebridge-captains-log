@@ -335,7 +335,7 @@ func runHAPMonitor(maxChecks int) {
 	if maxChecks > 0 {
 		checksInfo = fmt.Sprintf("%d", maxChecks)
 	}
-	fmt.Printf("Starting HAP (HomeKit) monitor (checks: %s, interval: %v)\n", checksInfo, interval)
+	fmt.Printf("Starting Homebridge Captain's Log (checks: %s, interval: %v)\n", checksInfo, interval)
 
 	// Track status for each discovered bridge
 	bridgeStatusMap := make(map[string]map[string]interface{})
@@ -390,14 +390,14 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 	fmt.Printf("\n[%s] Discovering child bridges (attempt %d/3)...\n", time.Now().Format("15:04:05"), attempt)
 
 	// Get known child bridges from API first
-	fmt.Printf("Getting child bridge list from HTTP API...\n")
+	fmt.Printf("Getting child bridge list from HTTP API...")
 	currentChildBridges := getChildBridges()
 	if len(currentChildBridges) == 0 {
 		fmt.Println("No child bridges found in API.")
 		return
 	}
 
-	fmt.Printf("Found %d child bridges from HTTP API\n", len(currentChildBridges))
+	fmt.Printf("(found %d ✅)\n", len(currentChildBridges))
 	debugf("Found %d child bridges from API\n", len(currentChildBridges))
 
 	var hapServices []HAPAccessory
@@ -429,7 +429,7 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 	if needsFullDiscovery {
 		debugf("Performing full mDNS discovery\n")
 		
-		fmt.Printf("Starting mDNS discovery for HAP services...\n")
+		fmt.Printf("Starting mDNS discovery for HAP services...")
 		// Discover HAP services via mDNS with 10-second total timeout (3s browse + 7s lookups)
 		// Pass child bridge names for optimized filtering
 		var expectedNames []string
@@ -437,7 +437,6 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 			expectedNames = append(expectedNames, bridge.Name)
 		}
 		allHAPServices := discoverHAPServicesWithTimeoutAndFilter(10*time.Second, expectedNames)
-		fmt.Printf("mDNS discovery completed, found %d total HAP services\n", len(allHAPServices))
 		debugf("mDNS discovered %d total HAP services\n", len(allHAPServices))
 
 		// Filter HAP services to only include known child bridges
@@ -480,9 +479,9 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 		*cachedHAPServices = hapServices
 		
 		if attempt == 1 {
-			fmt.Printf("Found all %d expected bridges via mDNS\n", len(hapServices))
+			fmt.Printf("mDNS discovery completed, looked up port data for all %d child bridges 🚀\n", len(hapServices))
 		} else {
-			fmt.Printf("Found all %d expected bridges via mDNS (succeeded on attempt %d)\n", len(hapServices), attempt)
+			fmt.Printf("mDNS discovery completed, looked up port data for all %d child bridges 🚀 (succeeded on attempt %d)\n", len(hapServices), attempt)
 		}
 	} else {
 		fmt.Printf("Using cached discovery for %d bridges\n", len(hapServices))
