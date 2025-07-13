@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -489,27 +490,41 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 
 	debugf("Total discovered child bridge services: %d\n", len(hapServices))
 
+	// Parallelize accessory checks using goroutines
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	bridgesWithAccessories := 0
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// Check each discovered service synchronously
+	// Process each service in parallel
 	for _, service := range hapServices {
-		// Check if this service actually has accessories
-		if !hasHAPAccessories(service.Host, service.Port) {
-			debugf("Service %s at %s:%d has no accessories\n", service.Name, service.Host, service.Port)
-			continue
-		}
+		wg.Add(1)
+		go func(svc HAPAccessory) {
+			defer wg.Done()
 
-		bridgesWithAccessories++
+			// Check if this service actually has accessories
+			if !hasHAPAccessories(svc.Host, svc.Port) {
+				debugf("Service %s at %s:%d has no accessories\n", svc.Name, svc.Host, svc.Port)
+				return
+			}
 
-		// Initialize status map for this bridge if needed
-		if bridgeStatusMap[service.ID] == nil {
-			bridgeStatusMap[service.ID] = make(map[string]interface{})
-		}
+			// Thread-safe increment
+			mu.Lock()
+			bridgesWithAccessories++
+			// Initialize status map for this bridge if needed
+			if bridgeStatusMap[svc.ID] == nil {
+				bridgeStatusMap[svc.ID] = make(map[string]interface{})
+			}
+			bridgeStatus := bridgeStatusMap[svc.ID]
+			mu.Unlock()
 
-		// Check accessories on this bridge
-		checkHAPAccessory(client, service, bridgeStatusMap[service.ID])
+			// Check accessories on this bridge with synchronized output
+			checkHAPAccessoryWithSync(client, svc, bridgeStatus, &mu)
+		}(service)
 	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
 
 	if bridgesWithAccessories == 0 {
 		fmt.Println("No HAP services with accessories found.")
@@ -721,6 +736,128 @@ type HAPCharacteristic struct {
 	Description string      `json:"description"`
 	Perms       []string    `json:"perms"`
 	Format      string      `json:"format"`
+}
+
+func checkHAPAccessoryWithSync(client *http.Client, acc HAPAccessory, lastStatus map[string]interface{}, mu *sync.Mutex) {
+	// Collect all output first, then print atomically
+	var output []string
+	
+	output = append(output, fmt.Sprintf("\n[%s] Checking %s...", time.Now().Format("15:04:05"), acc.Name))
+	
+	// Get accessories from the child bridge
+	url := fmt.Sprintf("http://%s:%d/accessories", acc.Host, acc.Port)
+	resp, err := client.Get(url)
+	if err != nil {
+		output = append(output, fmt.Sprintf("Connection failed: %v", err))
+		mu.Lock()
+		for _, line := range output {
+			fmt.Println(line)
+		}
+		mu.Unlock()
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		output = append(output, fmt.Sprintf("HTTP %d - Child bridges require HAP authentication", resp.StatusCode))
+		mu.Lock()
+		for _, line := range output {
+			fmt.Println(line)
+		}
+		mu.Unlock()
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		output = append(output, fmt.Sprintf("Failed to read response: %v", err))
+		mu.Lock()
+		for _, line := range output {
+			fmt.Println(line)
+		}
+		mu.Unlock()
+		return
+	}
+
+	// Parse HAP response
+	var hapResp HAPResponse
+	if err := json.Unmarshal(body, &hapResp); err != nil {
+		output = append(output, fmt.Sprintf("Failed to parse JSON: %v", err))
+		mu.Lock()
+		for _, line := range output {
+			fmt.Println(line)
+		}
+		mu.Unlock()
+		return
+	}
+
+	debugf("Parsed %d accessories from HAP response for %s\n", len(hapResp.Accessories), acc.Name)
+	if len(hapResp.Accessories) <= 3 {
+		debugf("Full HAP response for %s: %s\n", acc.Name, string(body))
+	}
+
+	changesDetected := 0
+	accessoryCount := 0
+	var accessoryNames []string
+	
+	// Check if this bridge has been seen before by looking for a special marker
+	bridgeMarkerKey := fmt.Sprintf("_bridge_seen_%s", acc.Name)
+	initialDiscovery := lastStatus[bridgeMarkerKey] == nil
+	
+	// Mark that we've seen this bridge
+	lastStatus[bridgeMarkerKey] = true
+
+	// Process each accessory
+	for _, accessory := range hapResp.Accessories {
+		accessoryName := getAccessoryName(accessory)
+		if accessoryName == "" {
+			continue // Skip if no name found
+		}
+		accessoryCount++
+		accessoryNames = append(accessoryNames, accessoryName)
+
+		// Check each service for ALL characteristics
+		for _, service := range accessory.Services {
+			for _, char := range service.Characteristics {
+				// Use a more stable key: bridge_name + AID + service_IID + char_IID + char_type
+				// This prevents issues when accessory names change or are unstable
+				key := fmt.Sprintf("%s_%d_%d_%d_%s", acc.Name, accessory.AID, service.IID, char.IID, char.Type)
+
+				if lastValue, exists := lastStatus[key]; exists {
+					if !reflect.DeepEqual(lastValue, char.Value) {
+						debugf("%s characteristic %s changed from %v (%T) to %v (%T)\n",
+							accessoryName, char.Description, lastValue, lastValue, char.Value, char.Value)
+						output = append(output, fmt.Sprintf("\n[%s] %s %s: %v → %v", time.Now().Format("15:04:05"), accessoryName, char.Description, lastValue, char.Value))
+						changesDetected++
+					}
+				} else {
+					debugf("First time seeing %s characteristic %s (%s) with value %v (%T)\n",
+						accessoryName, char.Description, char.Type, char.Value, char.Value)
+				}
+
+				lastStatus[key] = char.Value
+			}
+		}
+	}
+
+	if initialDiscovery && accessoryCount > 0 {
+		if accessoryCount == 1 {
+			output = append(output, fmt.Sprintf("Found %d accessory: %s.", accessoryCount, accessoryNames[0]))
+		} else {
+			output = append(output, fmt.Sprintf("Found %d accessories: %s.", accessoryCount, strings.Join(accessoryNames, ", ")))
+		}
+	} else if changesDetected == 0 {
+		output = append(output, fmt.Sprintf("No changes detected in %d accessories.", accessoryCount))
+	} else {
+		output = append(output, fmt.Sprintf("Summary: %d changes detected", changesDetected))
+	}
+	
+	// Print all output atomically
+	mu.Lock()
+	for _, line := range output {
+		fmt.Println(line)
+	}
+	mu.Unlock()
 }
 
 func checkHAPAccessory(client *http.Client, acc HAPAccessory, lastStatus map[string]interface{}) {
