@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2025-07-13
+
+### Added
+- **AWTRIX3 Display Integration** - Real-time accessory change notifications to AWTRIX3 LED matrix displays
+- **Rainbow text effects** for all AWTRIX3 notifications with automatic queuing
+- **Connection announcements** sent to AWTRIX3 devices when tool connects (auto-discovery vs manual configuration)
+- **`--at3-disable` flag** to disable AWTRIX3 change emission for environments without displays
+- **Comprehensive AWTRIX3 notification system** with JSON API integration for the `/api/notify` endpoint
+
+### Changed
+- **Enhanced change reporting** now simultaneously outputs to console and AWTRIX3 displays
+- **Improved accessory monitoring** with dual-channel notification delivery
+
+### Fixed
+- **Code formatting and quality** improvements via automated linting and static analysis
+
+### Development
+- **Security scanning** shows 0 vulnerabilities with comprehensive gosec analysis
+- **Enhanced test coverage** with all quality checks passing
+- **Dependency security review** with vulnerability scanning and update detection
+
 ## [0.3.0] - 2025-07-13
 
 ### Added

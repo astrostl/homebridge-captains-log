@@ -50,8 +50,12 @@ var (
 	debug    bool
 
 	// AWTRIX3 configuration
-	at3Host string
-	at3Port int
+	at3Host    string
+	at3Port    int
+	at3Disable bool
+
+	// Global AWTRIX3 client
+	awtrix3Client *AWTRIX3Client
 )
 
 // Timeout Configuration - All timeouts used throughout the application
@@ -109,6 +113,94 @@ var TimeoutConfig = struct {
 	DefaultPollingInterval: 3 * time.Second,
 }
 
+// AWTRIX3Client handles notification posting to AWTRIX3 devices
+type AWTRIX3Client struct {
+	devices []MDNSService
+	client  *http.Client
+}
+
+// AWTRIX3Notification represents the JSON payload for AWTRIX3 notifications
+type AWTRIX3Notification struct {
+	Text     string `json:"text"`
+	Duration int    `json:"duration,omitempty"`
+	Rainbow  bool   `json:"rainbow,omitempty"`
+	Stack    bool   `json:"stack,omitempty"`
+	Repeat   int    `json:"repeat,omitempty"`
+	Icon     string `json:"icon,omitempty"`
+}
+
+// NewAWTRIX3Client creates a new AWTRIX3 client with discovered devices
+func NewAWTRIX3Client(devices []MDNSService) *AWTRIX3Client {
+	return &AWTRIX3Client{
+		devices: devices,
+		client:  &http.Client{Timeout: TimeoutConfig.HTTPClient},
+	}
+}
+
+// PostNotification sends a notification to all AWTRIX3 devices
+func (a *AWTRIX3Client) PostNotification(notification AWTRIX3Notification) {
+	if len(a.devices) == 0 {
+		debugf("No AWTRIX3 devices configured, skipping notification\n")
+		return
+	}
+
+	debugf("Posting notification to %d AWTRIX3 devices: %s\n", len(a.devices), notification.Text)
+
+	for _, device := range a.devices {
+		go a.postToDevice(device, notification)
+	}
+}
+
+// postToDevice sends notification to a single AWTRIX3 device
+func (a *AWTRIX3Client) postToDevice(device MDNSService, notification AWTRIX3Notification) {
+	url := fmt.Sprintf("http://%s:%d/api/notify", device.Host, device.Port)
+
+	jsonData, err := json.Marshal(notification)
+	if err != nil {
+		debugf("Failed to marshal AWTRIX3 notification: %v\n", err)
+		return
+	}
+
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(jsonData)))
+	if err != nil {
+		debugf("Failed to create AWTRIX3 request for %s:%d: %v\n", device.Host, device.Port, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		debugf("Failed to post to AWTRIX3 device %s:%d: %v\n", device.Host, device.Port, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		debugf("AWTRIX3 device %s:%d returned status %d\n", device.Host, device.Port, resp.StatusCode)
+		return
+	}
+
+	debugf("Successfully posted notification to AWTRIX3 device %s:%d\n", device.Host, device.Port)
+}
+
+// sendDiscoveryNotification sends a connection announcement to AWTRIX3 devices
+func (a *AWTRIX3Client) sendDiscoveryNotification(discoveryMethod string) {
+	var message string
+	if discoveryMethod == "Auto-discovered" {
+		message = "Homebridge Captain's Log automatically connected!"
+	} else {
+		message = "Homebridge Captain's Log manually connected!"
+	}
+
+	discoveryNotification := AWTRIX3Notification{
+		Text:    message,
+		Repeat:  1,    // Show message exactly once
+		Rainbow: true, // Rainbow text effect
+		Stack:   true, // Queue with other notifications
+	}
+	a.PostNotification(discoveryNotification)
+}
+
 // Application constants
 const (
 	DefaultHomebridgePort = 8581
@@ -150,6 +242,7 @@ func init() {
 	// AWTRIX3 flags
 	rootCmd.Flags().StringVar(&at3Host, "at3-host", defaultAT3Host, "AWTRIX3 host IP/hostname (default auto-discovered)")
 	rootCmd.Flags().IntVar(&at3Port, "at3-port", defaultAT3Port, "AWTRIX3 port")
+	rootCmd.Flags().BoolVar(&at3Disable, "at3-disable", false, "Disable AWTRIX3 change emission")
 	rootCmd.Flags().BoolP("main", "m", false, "Monitor main bridge only (default child bridges only)")
 }
 
@@ -169,6 +262,9 @@ func runMonitor(cmd *cobra.Command, _ []string) {
 		fmt.Printf("ERROR: Failed to discover Homebridge instance and no manual configuration provided\n")
 		return
 	}
+
+	// Initialize AWTRIX3 client if not disabled
+	initializeAWTRIX3Client(cmd)
 
 	// Default to HAP mode (child bridges), unless main mode is requested
 	useHAP = true
@@ -302,6 +398,55 @@ func resolveAWTRIX3Location(cmd *cobra.Command) (string, int) {
 	}
 
 	return "", 0
+}
+
+// initializeAWTRIX3Client sets up the AWTRIX3 client based on configuration
+func initializeAWTRIX3Client(cmd *cobra.Command) {
+	if at3Disable {
+		fmt.Printf("AWTRIX3 change emission disabled via --at3-disable\n")
+		awtrix3Client = NewAWTRIX3Client([]MDNSService{})
+		return
+	}
+
+	// Check for manual AWTRIX3 configuration
+	manualHost, manualPort := resolveAWTRIX3Location(cmd)
+	if manualHost != "" {
+		fmt.Printf("Using manual AWTRIX3 configuration: %s:%d\n", manualHost, manualPort)
+		devices := []MDNSService{{
+			Name: "Manual AWTRIX3",
+			Host: manualHost,
+			Port: manualPort,
+		}}
+		awtrix3Client = NewAWTRIX3Client(devices)
+		awtrix3Client.sendDiscoveryNotification("Manually configured")
+		return
+	}
+
+	// Auto-discover AWTRIX3 devices
+	fmt.Printf("Auto-discovering AWTRIX3 devices...\n")
+	client := NewMDNSClient(TimeoutConfig.MDNSTotal)
+	ctx := context.Background()
+
+	awtrixDevices, err := client.DiscoverAWTRIXServices(ctx)
+	if err != nil {
+		fmt.Printf("AWTRIX3 auto-discovery failed (non-critical): %v\n", err)
+		awtrix3Client = NewAWTRIX3Client([]MDNSService{})
+		return
+	}
+
+	if len(awtrixDevices) == 0 {
+		fmt.Printf("No AWTRIX3 devices found\n")
+		awtrix3Client = NewAWTRIX3Client([]MDNSService{})
+		return
+	}
+
+	fmt.Printf("Found %d AWTRIX3 device(s):\n", len(awtrixDevices))
+	for _, device := range awtrixDevices {
+		fmt.Printf("  - %s at %s:%d\n", device.Name, device.Host, device.Port)
+	}
+
+	awtrix3Client = NewAWTRIX3Client(awtrixDevices)
+	awtrix3Client.sendDiscoveryNotification("Auto-discovered")
 }
 
 // discoverServices discovers the main Homebridge instance and AWTRIX devices via mDNS concurrently
@@ -665,20 +810,42 @@ func (m *StatusMonitor) reportChange(old, current AccessoryStatus) {
 		current.LastUpdated.Format("15:04:05"),
 		current.ServiceName)
 
+	var changeMessages []string
+
 	for key, newValue := range current.Values {
 		if oldValue, exists := old.Values[key]; exists {
 			if !reflect.DeepEqual(oldValue, newValue) {
 				message := m.formatChangeMessage(key, oldValue, newValue, current.ServiceName)
 				fmt.Printf("  %s\n", message)
+				changeMessages = append(changeMessages, fmt.Sprintf("%s: %s", current.ServiceName, message))
 			}
 		} else {
-			fmt.Printf("  %s: (new) %v\n", key, newValue)
+			message := fmt.Sprintf("%s: (new) %v", key, newValue)
+			fmt.Printf("  %s\n", message)
+			changeMessages = append(changeMessages, fmt.Sprintf("%s: %s", current.ServiceName, message))
 		}
 	}
 
 	for key, oldValue := range old.Values {
 		if _, exists := current.Values[key]; !exists {
-			fmt.Printf("  %s: %v → (removed)\n", key, oldValue)
+			message := fmt.Sprintf("%s: %v → (removed)", key, oldValue)
+			fmt.Printf("  %s\n", message)
+			changeMessages = append(changeMessages, fmt.Sprintf("%s: %s", current.ServiceName, message))
+		}
+	}
+
+	// Send changes to AWTRIX3 if available
+	// AWTRIX3 handles queuing automatically when Stack=true (default behavior)
+	// Each notification shows exactly once with rainbow text
+	if awtrix3Client != nil && len(changeMessages) > 0 {
+		for _, message := range changeMessages {
+			notification := AWTRIX3Notification{
+				Text:    message,
+				Repeat:  1,    // Show message exactly once
+				Rainbow: true, // Rainbow text effect
+				Stack:   true, // Queue notifications (AWTRIX3 handles the queue)
+			}
+			awtrix3Client.PostNotification(notification)
 		}
 	}
 }
@@ -1333,6 +1500,18 @@ func processAccessoryCharacteristics(
 					debugf("%s characteristic %s changed from %v (%T) to %v (%T)\n",
 						accessoryName, char.Description, lastValue, lastValue, char.Value, char.Value)
 					changesDetected++
+
+					// Send to AWTRIX3 if available
+					// AWTRIX3 handles queuing automatically when Stack=true
+					if awtrix3Client != nil {
+						notification := AWTRIX3Notification{
+							Text:    changeMsg,
+							Repeat:  1,    // Show message exactly once
+							Rainbow: true, // Rainbow text effect
+							Stack:   true, // Queue notifications (AWTRIX3 handles the queue)
+						}
+						awtrix3Client.PostNotification(notification)
+					}
 				}
 			} else {
 				debugf("First time seeing %s characteristic %s (%s) with value %v (%T)\n",
