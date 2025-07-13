@@ -2,6 +2,10 @@
 
 A Go CLI tool to monitor Homebridge accessory status changes.
 
+## Documentation Requirements
+
+**CRITICAL: README.md must always include a disclaimer at the top stating this software was "vibe coded" with Claude Code, use at your own risk, no warranty or guarantee provided.**
+
 ## Environment Configuration
 
 For testing, a `.env` file contains the Homebridge configuration using CLOG_ prefix:
@@ -13,10 +17,22 @@ The `.env` file is gitignored to prevent committing local configuration.
 
 ## API Documentation
 
+### Homebridge API
+
 Homebridge UI has Swagger documentation available at `/swagger` endpoint.
-Local copy stored in `homebridge-api.json` for reference.
+Local copy stored in `ref/homebridge-api.json` for reference.
 
 Source code: https://github.com/homebridge/homebridge-config-ui-x
+
+### AWTRIX3 API
+
+AWTRIX3 LED matrix display API documentation stored in `ref/awtrix3-api.md` for reference.
+
+**Hardware**: Ulanzi TC001 - 32x8 pixel LED matrix (verified via corner pixel testing)
+
+**Screen Capture**: Can retrieve current display state via `curl http://[IP]/api/screen` - returns 256-element array of RGB values for analysis
+
+Source: https://raw.githubusercontent.com/Blueforcer/awtrix3/main/docs/api.md
 
 ### Getting Auth Token for Debugging
 

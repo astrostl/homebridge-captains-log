@@ -1,0 +1,160 @@
+# Revive configuration for enhanced code quality and security
+# See: https://revive.run/docs#configuration
+
+# Global settings
+ignoreGeneratedHeader = false
+severity = "warning"
+confidence = 0.8
+errorCode = 1
+warningCode = 0
+
+# Rule configuration
+[rule.blank-imports]
+
+[rule.context-as-argument]
+
+[rule.context-keys-type]
+
+[rule.dot-imports]
+
+[rule.error-return]
+
+[rule.error-strings]
+
+[rule.error-naming]
+
+[rule.exported]
+  arguments = ["checkPrivateReceivers", "sayRepetitiveInsteadOfStutters"]
+
+[rule.if-return]
+
+[rule.increment-decrement]
+
+[rule.var-naming]
+
+[rule.var-declaration]
+
+[rule.package-comments]
+
+[rule.range]
+
+[rule.receiver-naming]
+
+[rule.time-naming]
+
+[rule.unexported-return]
+
+[rule.indent-error-flow]
+
+[rule.errorf]
+
+[rule.empty-block]
+
+[rule.superfluous-else]
+
+[rule.unused-parameter]
+
+[rule.unreachable-code]
+
+[rule.redefines-builtin-id]
+
+# Security-focused rules
+[rule.deep-exit]
+  # Prevent os.Exit in functions (security anti-pattern)
+
+[rule.flag-parameter]
+  # Flag boolean parameters as potential security issues
+
+[rule.function-result-limit]
+  arguments = [3]  # Limit return values to prevent complexity
+
+[rule.function-length]
+  arguments = [50, 0]  # Max 50 statements per function (tightened while still accommodating network code)
+
+[rule.line-length-limit]
+  arguments = [130]  # Slightly relaxed line length for complex network code
+
+[rule.cognitive-complexity]
+  arguments = [15]  # Tightened to encourage better code organization while accommodating network discovery
+
+[rule.cyclomatic]
+  arguments = [15]  # Match Makefile cyclomatic complexity threshold
+
+[rule.max-public-structs]
+  arguments = [10]  # Limit public API surface
+
+[rule.confusing-naming]
+
+[rule.confusing-results]
+
+[rule.unused-receiver]
+
+[rule.constant-logical-expr]
+
+[rule.bool-literal-in-expr]
+
+[rule.imports-blacklist]
+  arguments = ["crypto/md5", "crypto/sha1", "crypto/des", "crypto/rc4"]
+
+[rule.range-val-in-closure]
+
+[rule.range-val-address]
+
+[rule.waitgroup-by-value]
+
+[rule.atomic]
+
+[rule.empty-lines]
+
+[rule.add-constant]
+  arguments = [
+    { maxLitCount = "5", allowStrs = "\"\"", allowInts = "0,1,2,3,4", allowFloats = "0.0,1.0,2.0" }
+  ]
+
+[rule.argument-limit]
+  arguments = [7]  # Max 7 function arguments (relaxed for configuration functions)
+
+# Custom security rules
+[rule.banned-characters]
+  arguments = ["Ω", "Σ"]  # Prevent confusing unicode
+
+[rule.struct-tag]
+  arguments = [
+    "json,inline",
+    "bson,outline,gnu"
+  ]
+
+[rule.unhandled-error]
+  arguments = [
+    "fmt.Printf",
+    "fmt.Print", 
+    "fmt.Println"
+  ]  # Require error handling for specific functions
+
+# File exclusions
+[rule.file-header]
+  arguments = ["This file is part of homebridge-captains-log"]
+
+# Disable rules that conflict with our architecture
+[directive."**"]
+
+# Specific file patterns - Relax rules for test files
+[directive."*_test.go"]
+  [[directive."*_test.go".rules]]
+    name = "add-constant"
+    disabled = true
+  [[directive."*_test.go".rules]]
+    name = "cognitive-complexity"
+    disabled = true
+  [[directive."*_test.go".rules]]
+    name = "function-length"
+    disabled = true
+  [[directive."*_test.go".rules]]
+    name = "line-length-limit"
+    disabled = true
+  [[directive."*_test.go".rules]]
+    name = "file-header"
+    disabled = true
+  [[directive."*_test.go".rules]]
+    name = "cyclomatic"
+    disabled = true

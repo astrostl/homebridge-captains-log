@@ -1,0 +1,26 @@
+{
+  "global": {
+    "severity": "medium",
+    "confidence": "medium",
+    "exclude-generated": true,
+    "show-ignored": true,
+    "quiet": false
+  },
+  "rules": {
+    "include": [
+      "G101", "G102", "G103", "G104", "G106", "G107", "G108", "G109", "G110",
+      "G111", "G112", "G114", "G115", "G201", "G202", "G203", "G204", "G301",
+      "G302", "G303", "G304", "G305", "G306", "G307", "G401", "G402", "G403",
+      "G404", "G405", "G406", "G407", "G501", "G502", "G503", "G504", "G505",
+      "G506", "G507", "G601", "G602"
+    ]
+  },
+  "exclude-dirs": [
+    ".git",
+    "vendor"
+  ],
+  "exclude": [
+    "**/*_test.go",
+    "**/testdata/**"
+  ]
+}

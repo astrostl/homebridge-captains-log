@@ -14,7 +14,7 @@ MISSPELL_VERSION=v0.7.0
 GOVULNCHECK_VERSION=v1.1.3
 DEADCODE_VERSION=latest
 
-.PHONY: build test fmt fmts vet mod verify vulncheck clean lint cyclo imports staticcheck gosec ineffassign misspell deadcode quality check all install deps help
+.PHONY: build test fmt fmts vet mod verify vulncheck clean lint cyclo imports staticcheck gosec ineffassign misspell deadcode depscan security quality check all install deps help
 
 # Individual targets
 build: ## Build the binary
@@ -42,9 +42,9 @@ vulncheck: ## Check for known vulnerabilities
 	@command -v $$(go env GOPATH)/bin/govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	$$(go env GOPATH)/bin/govulncheck ./...
 
-lint: ## Run revive linter
+lint: ## Run revive linter with configuration
 	@command -v $$(go env GOPATH)/bin/revive >/dev/null 2>&1 || go install github.com/mgechev/revive@$(REVIVE_VERSION)
-	$$(go env GOPATH)/bin/revive -set_exit_status ./...
+	$$(go env GOPATH)/bin/revive -config .revive.toml -set_exit_status ./...
 
 cyclo: ## Check cyclomatic complexity (threshold 15)
 	@command -v $$(go env GOPATH)/bin/gocyclo >/dev/null 2>&1 || go install github.com/fzipp/gocyclo/cmd/gocyclo@$(GOCYCLO_VERSION)
@@ -58,9 +58,10 @@ staticcheck: ## Run enhanced static analysis
 	@command -v $$(go env GOPATH)/bin/staticcheck >/dev/null 2>&1 || go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)
 	$$(go env GOPATH)/bin/staticcheck ./...
 
-gosec: ## Run security vulnerability scanner
+gosec: ## Run security vulnerability scanner with configuration
 	@command -v $$(go env GOPATH)/bin/gosec >/dev/null 2>&1 || go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
-	$$(go env GOPATH)/bin/gosec ./...
+	$$(go env GOPATH)/bin/gosec -conf .gosec.json -fmt sarif -out gosec-report.sarif ./...
+	$$(go env GOPATH)/bin/gosec -conf .gosec.json ./...
 
 ineffassign: ## Detect ineffectual assignments
 	@command -v $$(go env GOPATH)/bin/ineffassign >/dev/null 2>&1 || go install github.com/gordonklaus/ineffassign@$(INEFFASSIGN_VERSION)
@@ -74,13 +75,27 @@ deadcode: ## Detect unused (dead) code
 	@command -v $$(go env GOPATH)/bin/deadcode >/dev/null 2>&1 || go install golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION)
 	$$(go env GOPATH)/bin/deadcode ./...
 
+depscan: ## Enhanced dependency vulnerability scanning
+	@echo "Running comprehensive dependency security scan..."
+	@command -v $$(go env GOPATH)/bin/govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	$$(go env GOPATH)/bin/govulncheck -json ./... > govulncheck-report.json || true
+	$$(go env GOPATH)/bin/govulncheck ./...
+	@echo "Checking for dependency updates with security implications..."
+	go list -u -m all | grep -E "\[.*\]" || echo "All dependencies are up to date"
+	@echo "Generating module dependency graph for security review..."
+	go mod graph > deps-graph.txt
+
+security: gosec depscan ## Comprehensive security scan
+	@echo "Security scan complete. Check gosec-report.sarif and govulncheck-report.json for detailed results."
+
 
 clean: ## Remove build artifacts
 	rm -f $(BINARY_NAME)
 	rm -rf .codeql-db codeql-results.sarif
+	rm -f gosec-report.sarif govulncheck-report.json deps-graph.txt
 
 # Suite targets
-quality: fmt fmts vet verify vulncheck lint cyclo imports staticcheck gosec ineffassign misspell deadcode ## Run comprehensive quality checks
+quality: fmt fmts vet verify vulncheck lint cyclo imports staticcheck security ineffassign misspell deadcode ## Run comprehensive quality checks including security
 check: fmt vet test ## Run basic quality checks (fmt, vet, test)
 
 all: quality test build ## Full build pipeline (quality + test + build)

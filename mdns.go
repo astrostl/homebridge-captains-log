@@ -1,3 +1,4 @@
+// This file is part of homebridge-captains-log
 package main
 
 import (
@@ -32,27 +33,48 @@ func NewMDNSClient(timeout time.Duration) *MDNSClient {
 }
 
 // BrowseServicesWithEarlyCompletion discovers services with early completion when expected count is reached
-func (c *MDNSClient) BrowseServicesWithEarlyCompletion(_ context.Context, serviceType string, expectedCount int) ([]string, error) {
-	if expectedCount > 0 {
-		debugf("Starting mDNS browse for service type: %s (expecting %d services, will complete early)\n", serviceType, expectedCount)
-	} else {
-		debugf("Starting mDNS browse for service type: %s (unknown count, using full timeout)\n", serviceType)
-	}
+func (c *MDNSClient) BrowseServicesWithEarlyCompletion(
+	_ context.Context, serviceType string, expectedCount int,
+) ([]string, error) {
+	c.logBrowseStart(serviceType, expectedCount)
 
-	// Create multicast UDP connection
-	mcastAddr, err := net.ResolveUDPAddr("udp4", "224.0.0.251:5353")
+	conn, mcastAddr, err := c.setupMulticastConnection()
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve mDNS address: %w", err)
-	}
-
-	// Listen on multicast group
-	conn, err := net.ListenMulticastUDP("udp4", nil, mcastAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create multicast UDP listener: %w", err)
+		return nil, err
 	}
 	defer conn.Close()
 
-	// Create DNS query for PTR records
+	if err := c.sendBrowseQuery(conn, mcastAddr, serviceType); err != nil {
+		return nil, err
+	}
+
+	return c.collectBrowseResponses(conn, serviceType, expectedCount)
+}
+
+func (*MDNSClient) logBrowseStart(serviceType string, expectedCount int) {
+	if expectedCount > 0 {
+		debugf("Starting mDNS browse for service type: %s (expecting %d services, will complete early)\n",
+			serviceType, expectedCount)
+	} else {
+		debugf("Starting mDNS browse for service type: %s (unknown count, using full timeout)\n", serviceType)
+	}
+}
+
+func (*MDNSClient) setupMulticastConnection() (*net.UDPConn, *net.UDPAddr, error) {
+	mcastAddr, err := net.ResolveUDPAddr("udp4", "224.0.0.251:5353")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to resolve mDNS address: %w", err)
+	}
+
+	conn, err := net.ListenMulticastUDP("udp4", nil, mcastAddr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create multicast UDP listener: %w", err)
+	}
+
+	return conn, mcastAddr, nil
+}
+
+func (*MDNSClient) sendBrowseQuery(conn *net.UDPConn, mcastAddr *net.UDPAddr, serviceType string) error {
 	var msg dnsmessage.Message
 	msg.Header.ID = 0
 	msg.Header.OpCode = 0
@@ -67,91 +89,39 @@ func (c *MDNSClient) BrowseServicesWithEarlyCompletion(_ context.Context, servic
 
 	packed, err := msg.Pack()
 	if err != nil {
-		return nil, fmt.Errorf("failed to pack DNS message: %w", err)
+		return fmt.Errorf("failed to pack DNS message: %w", err)
 	}
 
-	// Send query to multicast address
 	_, err = conn.WriteTo(packed, mcastAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send query: %w", err)
+		return fmt.Errorf("failed to send query: %w", err)
 	}
 
 	debugf("Sent mDNS query for %s\n", serviceType)
+	return nil
+}
 
-	// Listen for responses with intelligent completion
+func (c *MDNSClient) collectBrowseResponses(conn *net.UDPConn, serviceType string, expectedCount int) ([]string, error) {
 	var services []string
-	serviceMap := make(map[string]bool) // Deduplicate services
+	serviceMap := make(map[string]bool)
 	deadline := time.Now().Add(c.timeout)
-
-	// Track when we last received a new service to detect when responses stop
 	var lastNewServiceTime time.Time
-	silenceTimeout := TimeoutConfig.MDNSSilenceTimeout // Complete after configured time of no new services
+	silenceTimeout := TimeoutConfig.MDNSSilenceTimeout
 
 	for time.Now().Before(deadline) {
-		// If we've found services and had silence for the timeout period, we're likely done
-		if len(services) > 0 && !lastNewServiceTime.IsZero() && time.Since(lastNewServiceTime) > silenceTimeout {
-			debugf("No new services for %v, completing with %d services\n", silenceTimeout, len(services))
+		if c.shouldCompleteEarly(services, lastNewServiceTime, silenceTimeout, expectedCount) {
 			break
 		}
 
-		// Also complete early if we've found the expected count and had some silence
-		if expectedCount > 0 && len(services) >= expectedCount && !lastNewServiceTime.IsZero() && time.Since(lastNewServiceTime) > TimeoutConfig.MDNSEarlyExitSilence {
-			debugf("Found expected %d services with early exit silence period, completing\n", expectedCount)
-			break
-		}
-
-		if err := conn.SetReadDeadline(time.Now().Add(TimeoutConfig.MDNSReadTimeout)); err != nil {
-			continue
-		}
-
-		buffer := make([]byte, 1500)
-		n, _, err := conn.ReadFrom(buffer)
+		newServices, err := c.readAndProcessResponse(conn, serviceType, serviceMap)
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue // This is expected - just means no response in configured read timeout window
-			}
-			debugf("Read error: %v\n", err)
 			continue
 		}
 
-		// Parse response
-		var response dnsmessage.Message
-		err = response.Unpack(buffer[:n])
-		if err != nil {
-			debugf("Failed to unpack response: %v\n", err)
-			continue
-		}
-
-		// Extract service names from PTR records that match our query
-		queryName := serviceType + ".local."
-		newServicesInThisResponse := 0
-		for _, answer := range response.Answers {
-			if answer.Header.Type == dnsmessage.TypePTR {
-				// Only process PTR records that are answering our specific query
-				if strings.EqualFold(answer.Header.Name.String(), queryName) {
-					if ptr, ok := answer.Body.(*dnsmessage.PTRResource); ok {
-						serviceName := ptr.PTR.String()
-						// Remove trailing dot and .local suffix
-						serviceName = strings.TrimSuffix(serviceName, ".local.")
-						serviceName = strings.TrimSuffix(serviceName, ".")
-						// Remove the service type suffix
-						serviceName = strings.TrimSuffix(serviceName, "."+serviceType)
-
-						if !serviceMap[serviceName] {
-							debugf("Found service: %s\n", serviceName)
-							services = append(services, serviceName)
-							serviceMap[serviceName] = true
-							newServicesInThisResponse++
-						}
-					}
-				}
-			}
-		}
-
-		// Update last new service time if we found any new services in this response
-		if newServicesInThisResponse > 0 {
+		if newServices > 0 {
+			services = c.updateServicesFromMap(serviceMap)
 			lastNewServiceTime = time.Now()
-			debugf("Found %d new services, updated silence timer\n", newServicesInThisResponse)
+			debugf("Found %d new services, updated silence timer\n", newServices)
 		}
 	}
 
@@ -159,10 +129,83 @@ func (c *MDNSClient) BrowseServicesWithEarlyCompletion(_ context.Context, servic
 	return services, nil
 }
 
-// BrowseServices discovers all services of the specified type
-// Equivalent to: dns-sd -B _hap._tcp
-func (c *MDNSClient) BrowseServices(ctx context.Context, serviceType string) ([]string, error) {
-	return c.BrowseServicesWithEarlyCompletion(ctx, serviceType, -1)
+func (*MDNSClient) shouldCompleteEarly(
+	services []string, lastNewServiceTime time.Time, silenceTimeout time.Duration, expectedCount int,
+) bool {
+	if len(services) > 0 && !lastNewServiceTime.IsZero() &&
+		time.Since(lastNewServiceTime) > silenceTimeout {
+		debugf("No new services for %v, completing with %d services\n", silenceTimeout, len(services))
+		return true
+	}
+
+	if expectedCount > 0 && len(services) >= expectedCount && !lastNewServiceTime.IsZero() &&
+		time.Since(lastNewServiceTime) > TimeoutConfig.MDNSEarlyExitSilence {
+		debugf("Found expected %d services with early exit silence period, completing\n", expectedCount)
+		return true
+	}
+
+	return false
+}
+
+func (c *MDNSClient) readAndProcessResponse(conn *net.UDPConn, serviceType string, serviceMap map[string]bool) (int, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(TimeoutConfig.MDNSReadTimeout)); err != nil {
+		return 0, err
+	}
+
+	buffer := make([]byte, MaxBufSize)
+	n, _, err := conn.ReadFrom(buffer)
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return 0, err // Expected timeout
+		}
+		debugf("Read error: %v\n", err)
+		return 0, err
+	}
+
+	var response dnsmessage.Message
+	err = response.Unpack(buffer[:n])
+	if err != nil {
+		debugf("Failed to unpack response: %v\n", err)
+		return 0, err
+	}
+
+	return c.extractServicesFromResponse(response, serviceType, serviceMap), nil
+}
+
+func (c *MDNSClient) extractServicesFromResponse(
+	response dnsmessage.Message, serviceType string, serviceMap map[string]bool,
+) int {
+	queryName := serviceType + ".local."
+	newServicesCount := 0
+
+	for _, answer := range response.Answers {
+		if answer.Header.Type == dnsmessage.TypePTR && strings.EqualFold(answer.Header.Name.String(), queryName) {
+			if ptr, ok := answer.Body.(*dnsmessage.PTRResource); ok {
+				serviceName := c.cleanServiceName(ptr.PTR.String(), serviceType)
+				if !serviceMap[serviceName] {
+					debugf("Found service: %s\n", serviceName)
+					serviceMap[serviceName] = true
+					newServicesCount++
+				}
+			}
+		}
+	}
+
+	return newServicesCount
+}
+
+func (*MDNSClient) cleanServiceName(serviceName, serviceType string) string {
+	serviceName = strings.TrimSuffix(serviceName, ".local.")
+	serviceName = strings.TrimSuffix(serviceName, ".")
+	return strings.TrimSuffix(serviceName, "."+serviceType)
+}
+
+func (*MDNSClient) updateServicesFromMap(serviceMap map[string]bool) []string {
+	var services []string
+	for serviceName := range serviceMap {
+		services = append(services, serviceName)
+	}
+	return services
 }
 
 // LookupService gets detailed information about a specific service
@@ -224,7 +267,7 @@ func (c *MDNSClient) LookupService(_ context.Context, serviceName, serviceType s
 			continue
 		}
 
-		buffer := make([]byte, 1500)
+		buffer := make([]byte, MaxBufSize)
 		n, _, err := conn.ReadFrom(buffer)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -262,52 +305,11 @@ func (c *MDNSClient) parseServiceResponse(response *dnsmessage.Message, serviceN
 		TXTRecords: make(map[string]string),
 	}
 
-	// Parse answers for SRV and TXT records
-	for _, answer := range response.Answers {
-		switch answer.Header.Type {
-		case dnsmessage.TypeSRV:
-			if srv, ok := answer.Body.(*dnsmessage.SRVResource); ok {
-				// Check if this SRV record is for the service we're looking up
-				expectedName := serviceName + "._hap._tcp.local."
-				if strings.EqualFold(answer.Header.Name.String(), expectedName) {
-					service.Port = int(srv.Port)
-					service.Host = strings.TrimSuffix(srv.Target.String(), ".")
-					debugf("Found SRV for %s: %s:%d\n", serviceName, service.Host, service.Port)
-				} else {
-					debugf("Skipping SRV record for %s (expected %s)\n", answer.Header.Name.String(), expectedName)
-				}
-			}
-		case dnsmessage.TypeTXT:
-			if txt, ok := answer.Body.(*dnsmessage.TXTResource); ok {
-				// Check if this TXT record is for the service we're looking up
-				expectedName := serviceName + "._hap._tcp.local."
-				if strings.EqualFold(answer.Header.Name.String(), expectedName) {
-					for _, record := range txt.TXT {
-						c.parseTXTRecord(string(record), service.TXTRecords)
-					}
-					debugf("Found TXT records for %s: %v\n", serviceName, service.TXTRecords)
-				} else {
-					debugf("Skipping TXT record for %s (expected %s)\n", answer.Header.Name.String(), expectedName)
-				}
-			}
-		}
-	}
+	expectedName := serviceName + "._hap._tcp.local."
 
-	// Also check additional records for A records to resolve hostname to IP
-	for _, additional := range response.Additionals {
-		if additional.Header.Type == dnsmessage.TypeA && service.Host != "" {
-			if strings.Contains(additional.Header.Name.String(), service.Host) {
-				if a, ok := additional.Body.(*dnsmessage.AResource); ok {
-					ip := net.IP(a.A[:])
-					service.Host = ip.String()
-					debugf("Resolved hostname to IP: %s\n", service.Host)
-					break
-				}
-			}
-		}
-	}
+	c.parseAnswerRecords(response.Answers, service, expectedName)
+	c.resolveHostToIP(response.Additionals, service)
 
-	// Only return service if we have both host and port
 	if service.Host != "" && service.Port > 0 {
 		return service
 	}
@@ -315,8 +317,61 @@ func (c *MDNSClient) parseServiceResponse(response *dnsmessage.Message, serviceN
 	return nil
 }
 
+func (c *MDNSClient) parseAnswerRecords(answers []dnsmessage.Resource, service *MDNSService, expectedName string) {
+	for _, answer := range answers {
+		switch answer.Header.Type {
+		case dnsmessage.TypeSRV:
+			c.parseSRVRecord(answer, service, expectedName)
+		case dnsmessage.TypeTXT:
+			c.parseTXTAnswer(answer, service, expectedName)
+		}
+	}
+}
+
+func (*MDNSClient) parseSRVRecord(answer dnsmessage.Resource, service *MDNSService, expectedName string) {
+	if srv, ok := answer.Body.(*dnsmessage.SRVResource); ok {
+		if strings.EqualFold(answer.Header.Name.String(), expectedName) {
+			service.Port = int(srv.Port)
+			service.Host = strings.TrimSuffix(srv.Target.String(), ".")
+			debugf("Found SRV for %s: %s:%d\n", service.Name, service.Host, service.Port)
+		} else {
+			debugf("Skipping SRV record for %s (expected %s)\n", answer.Header.Name.String(), expectedName)
+		}
+	}
+}
+
+func (c *MDNSClient) parseTXTAnswer(answer dnsmessage.Resource, service *MDNSService, expectedName string) {
+	if txt, ok := answer.Body.(*dnsmessage.TXTResource); ok {
+		if strings.EqualFold(answer.Header.Name.String(), expectedName) {
+			for _, record := range txt.TXT {
+				c.parseTXTRecord(string(record), service.TXTRecords)
+			}
+			debugf("Found TXT records for %s: %v\n", service.Name, service.TXTRecords)
+		} else {
+			debugf("Skipping TXT record for %s (expected %s)\n", answer.Header.Name.String(), expectedName)
+		}
+	}
+}
+
+func (*MDNSClient) resolveHostToIP(additionals []dnsmessage.Resource, service *MDNSService) {
+	if service.Host == "" {
+		return
+	}
+
+	for _, additional := range additionals {
+		if additional.Header.Type == dnsmessage.TypeA && strings.Contains(additional.Header.Name.String(), service.Host) {
+			if a, ok := additional.Body.(*dnsmessage.AResource); ok {
+				ip := net.IP(a.A[:])
+				service.Host = ip.String()
+				debugf("Resolved hostname to IP: %s\n", service.Host)
+				break
+			}
+		}
+	}
+}
+
 // parseTXTRecord parses a TXT record string into key-value pairs
-func (c *MDNSClient) parseTXTRecord(record string, txtRecords map[string]string) {
+func (*MDNSClient) parseTXTRecord(record string, txtRecords map[string]string) {
 	if strings.Contains(record, "=") {
 		parts := strings.SplitN(record, "=", 2)
 		if len(parts) == 2 {
@@ -357,7 +412,7 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 
 	// Filter services to only those that might match expected names (if provided)
 	var servicesToLookup []string
-	if expectedNames != nil && len(expectedNames) > 0 {
+	if len(expectedNames) > 0 {
 		servicesToLookup = filterServicesByExpectedNames(serviceNames, expectedNames)
 		debugf("Filtered to %d services for lookup\n", len(servicesToLookup))
 		debugf("Services to lookup: %v\n", servicesToLookup)
@@ -377,7 +432,7 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 	debugf("Starting parallel lookups for %d services: %v\n", len(servicesToLookup), servicesToLookup)
 
 	// Process services in parallel with reasonable concurrency limit
-	maxConcurrency := 10
+	maxConcurrency := MaxStatementsPerFunc
 	if len(servicesToLookup) < maxConcurrency {
 		maxConcurrency = len(servicesToLookup)
 	}
@@ -420,7 +475,8 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 					return
 				}
 
-				debugf("Successfully looked up service %s at %s:%d with TXT records: %v\n", service.Name, service.Host, service.Port, service.TXTRecords)
+				debugf("Successfully looked up service %s at %s:%d with TXT records: %v\n",
+					service.Name, service.Host, service.Port, service.TXTRecords)
 
 				// Check if this is a Homebridge service
 				if md, exists := service.TXTRecords["md"]; exists && strings.ToLower(md) == "homebridge" {
@@ -446,7 +502,8 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 	case <-done:
 		debugf("Discovery completed, found %d Homebridge services\n", len(homebridgeServices))
 	case <-lookupCtx.Done():
-		debugf("Lookup phase timed out after %v, found %d Homebridge services so far\n", TimeoutConfig.MDNSLookupMax, len(homebridgeServices))
+		debugf("Lookup phase timed out after %v, found %d Homebridge services so far\n",
+			TimeoutConfig.MDNSLookupMax, len(homebridgeServices))
 		return homebridgeServices, nil // Don't return error for lookup timeout
 	}
 
@@ -516,14 +573,14 @@ func filterServicesByExpectedNames(serviceNames []string, expectedNames []string
 		if len(fields) == 0 {
 			continue
 		}
-		
+
 		var trimmedName string
 		if len(fields) > 1 {
 			trimmedName = strings.Join(fields[:len(fields)-1], " ")
 		} else {
 			trimmedName = fields[0]
 		}
-		
+
 		// Check for exact match with trimmed name
 		if expectedMap[strings.ToLower(trimmedName)] {
 			filtered = append(filtered, serviceName) // Keep original full name for HAP operations
@@ -531,93 +588,4 @@ func filterServicesByExpectedNames(serviceNames []string, expectedNames []string
 	}
 
 	return filtered
-}
-
-// DiscoverHomebridgeServicesWithProgress discovers Homebridge HAP services with progress updates
-func (c *MDNSClient) DiscoverHomebridgeServicesWithProgress(ctx context.Context, expectedNames []string, progressChan chan<- DiscoveryProgress) []MDNSService {
-	debugf("Starting custom mDNS discovery for _hap._tcp services with progress updates (total timeout: %v)...\n", TimeoutConfig.MDNSTotal)
-
-	// Phase 1: Browse for services
-	browseCtx, browseCancel := context.WithTimeout(ctx, TimeoutConfig.MDNSBrowseMax)
-	defer browseCancel()
-
-	serviceNames, err := c.BrowseServicesWithEarlyCompletion(browseCtx, "_hap._tcp", len(expectedNames))
-	if err != nil {
-		debugf("Browse failed: %v\n", err)
-		return []MDNSService{}
-	}
-	debugf("Browse completed, found %d services\n", len(serviceNames))
-
-	// Filter services based on expected names
-	filteredNames := filterServicesByExpectedNames(serviceNames, expectedNames)
-	debugf("Services to lookup: %v\n", filteredNames)
-
-	// Phase 2: Parallel lookups with progress updates
-	lookupCtx, lookupCancel := context.WithTimeout(ctx, TimeoutConfig.MDNSLookupMax)
-	defer lookupCancel()
-
-	var wg sync.WaitGroup
-	serviceResults := make(chan *MDNSService, len(filteredNames))
-
-	debugf("Starting parallel lookups for %d services: %v\n", len(filteredNames), filteredNames)
-
-	for _, serviceName := range filteredNames {
-		wg.Add(1)
-		go func(name string) {
-			defer wg.Done()
-			
-			// Send progress update for lookup start
-			select {
-			case progressChan <- DiscoveryProgress{
-				Phase: "lookup",
-				ServiceName: name,
-				Service: nil,
-				Current: 0,
-				Total: len(filteredNames),
-			}:
-			default:
-				// Don't block if channel is full
-			}
-
-			service := c.lookupServiceWithRetries(lookupCtx, name, "_hap._tcp")
-			if service != nil {
-				// Send progress update for completion
-				select {
-				case progressChan <- DiscoveryProgress{
-					Phase: "lookup",
-					ServiceName: name,
-					Service: service,
-					Current: 1,
-					Total: len(filteredNames),
-				}:
-				default:
-					// Don't block if channel is full
-				}
-			}
-			serviceResults <- service
-		}(serviceName)
-	}
-
-	// Wait for all lookups to complete
-	go func() {
-		wg.Wait()
-		close(serviceResults)
-	}()
-
-	// Collect results and filter for Homebridge services
-	var services []MDNSService
-	for service := range serviceResults {
-		if service != nil {
-			// Check if this is a Homebridge service
-			if mdValue, exists := service.TXTRecords["md"]; exists && mdValue == "homebridge" {
-				debugf("Found Homebridge service: %s at %s:%d\n", service.Name, service.Host, service.Port)
-				services = append(services, *service)
-			} else {
-				debugf("Skipping non-Homebridge service: %s (md=%s)\n", service.Name, mdValue)
-			}
-		}
-	}
-
-	debugf("Discovery completed, found %d Homebridge services\n", len(services))
-	return services
 }

@@ -1,3 +1,4 @@
+// This file is part of homebridge-captains-log
 package main
 
 import (
@@ -8,8 +9,35 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+)
+
+// Test constants to avoid magic numbers
+const (
+	testPort         = 8080
+	testPortAlt      = 9090
+	testBrightness50 = 50
+	testBrightness75 = 75
+	testBrightness80 = 80
+	testTemp225      = 22.5
+	testTemp231      = 23.1
+	testHumidity45   = 45.0
+	testHumidity485  = 48.5
+	testHue180       = 180
+	testAID123       = 123
+	testBridgePort1  = 51234
+	testBridgePort2  = 51250
+	testBridgePort3  = 51251
+)
+
+const (
+	testServiceName     = "Test Light"
+	testCharOn          = "On"
+	testCharBrightness  = "Brightness"
+	testServiceNameTest = "TestService"
+	testHostIP          = "192.168.1.100"
 )
 
 func TestGetEnvOrDefault(t *testing.T) {
@@ -67,23 +95,23 @@ func TestGetEnvIntOrDefault(t *testing.T) {
 		{
 			name:         "valid integer",
 			key:          "TEST_INT",
-			defaultValue: 8080,
+			defaultValue: testPort,
 			envValue:     "9090",
-			want:         9090,
+			want:         testPortAlt,
 		},
 		{
 			name:         "invalid integer returns default",
 			key:          "INVALID_INT",
-			defaultValue: 8080,
+			defaultValue: testPort,
 			envValue:     "not_a_number",
-			want:         8080,
+			want:         testPort,
 		},
 		{
 			name:         "empty value returns default",
 			key:          "EMPTY_INT",
-			defaultValue: 8080,
+			defaultValue: testPort,
 			envValue:     "",
-			want:         8080,
+			want:         testPort,
 		},
 	}
 
@@ -112,40 +140,40 @@ func TestHasChanged(t *testing.T) {
 		{
 			name: "no change",
 			old: AccessoryStatus{
-				Values: map[string]interface{}{"On": true, "Brightness": 50},
+				Values: map[string]interface{}{testCharOn: true, testCharBrightness: testBrightness50},
 			},
 			new: AccessoryStatus{
-				Values: map[string]interface{}{"On": true, "Brightness": 50},
+				Values: map[string]interface{}{testCharOn: true, testCharBrightness: testBrightness50},
 			},
 			want: false,
 		},
 		{
 			name: "value changed",
 			old: AccessoryStatus{
-				Values: map[string]interface{}{"On": true},
+				Values: map[string]interface{}{testCharOn: true},
 			},
 			new: AccessoryStatus{
-				Values: map[string]interface{}{"On": false},
+				Values: map[string]interface{}{testCharOn: false},
 			},
 			want: true,
 		},
 		{
 			name: "new key added",
 			old: AccessoryStatus{
-				Values: map[string]interface{}{"On": true},
+				Values: map[string]interface{}{testCharOn: true},
 			},
 			new: AccessoryStatus{
-				Values: map[string]interface{}{"On": true, "Brightness": 50},
+				Values: map[string]interface{}{testCharOn: true, testCharBrightness: testBrightness50},
 			},
 			want: true,
 		},
 		{
 			name: "key removed",
 			old: AccessoryStatus{
-				Values: map[string]interface{}{"On": true, "Brightness": 50},
+				Values: map[string]interface{}{testCharOn: true, testCharBrightness: testBrightness50},
 			},
 			new: AccessoryStatus{
-				Values: map[string]interface{}{"On": true},
+				Values: map[string]interface{}{testCharOn: true},
 			},
 			want: true,
 		},
@@ -174,18 +202,18 @@ func TestFormatChangeMessage(t *testing.T) {
 	}{
 		{
 			name:        "turn on",
-			key:         "On",
+			key:         testCharOn,
 			oldValue:    false,
 			newValue:    true,
-			serviceName: "Test Light",
+			serviceName: testServiceName,
 			want:        "turned ON",
 		},
 		{
 			name:        "turn off",
-			key:         "On",
+			key:         testCharOn,
 			oldValue:    true,
 			newValue:    false,
-			serviceName: "Test Light",
+			serviceName: testServiceName,
 			want:        "turned OFF",
 		},
 		{
@@ -222,33 +250,33 @@ func TestFormatChangeMessage(t *testing.T) {
 		},
 		{
 			name:        "brightness change",
-			key:         "Brightness",
-			oldValue:    50,
-			newValue:    75,
-			serviceName: "Test Light",
+			key:         testCharBrightness,
+			oldValue:    testBrightness50,
+			newValue:    testBrightness75,
+			serviceName: testServiceName,
 			want:        "brightness: 50% → 75%",
 		},
 		{
 			name:        "temperature change",
 			key:         "CurrentTemperature",
-			oldValue:    22.5,
-			newValue:    23.1,
+			oldValue:    testTemp225,
+			newValue:    testTemp231,
 			serviceName: "Temperature Sensor",
 			want:        "temperature: 22.5°C → 23.1°C",
 		},
 		{
 			name:        "humidity change",
 			key:         "CurrentRelativeHumidity",
-			oldValue:    45.0,
-			newValue:    48.5,
+			oldValue:    testHumidity45,
+			newValue:    testHumidity485,
 			serviceName: "Humidity Sensor",
 			want:        "humidity: 45.0% → 48.5%",
 		},
 		{
 			name:        "battery level change",
 			key:         "BatteryLevel",
-			oldValue:    80,
-			newValue:    75,
+			oldValue:    testBrightness80,
+			newValue:    testBrightness75,
 			serviceName: "Battery Device",
 			want:        "battery: 80% → 75%",
 		},
@@ -294,9 +322,9 @@ func TestFetchAccessories(t *testing.T) {
 		testAccessories := []AccessoryStatus{
 			{
 				UniqueID:    "test1",
-				ServiceName: "Test Light",
+				ServiceName: testServiceName,
 				Type:        "light",
-				Values:      map[string]interface{}{"On": true},
+				Values:      map[string]interface{}{testCharOn: true},
 			},
 		}
 
@@ -444,7 +472,7 @@ func TestGetAccessoryName(t *testing.T) {
 							{
 								Type:        "23",
 								Description: "Name",
-								Value:       123,
+								Value:       testAID123,
 							},
 						},
 					},
@@ -464,44 +492,6 @@ func TestGetAccessoryName(t *testing.T) {
 	}
 }
 
-func TestGetFloatValue(t *testing.T) {
-	tests := []struct {
-		name string
-		val  interface{}
-		want float64
-	}{
-		{
-			name: "float64 value",
-			val:  1.5,
-			want: 1.5,
-		},
-		{
-			name: "int value",
-			val:  42,
-			want: 0.0,
-		},
-		{
-			name: "string value",
-			val:  "not a number",
-			want: 0.0,
-		},
-		{
-			name: "nil value",
-			val:  nil,
-			want: 0.0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := getFloatValue(tt.val)
-			if got != tt.want {
-				t.Errorf("getFloatValue() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestIsKnownChildBridge(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -513,8 +503,8 @@ func TestIsKnownChildBridge(t *testing.T) {
 			name: "main bridge excluded",
 			hapService: HAPAccessory{
 				Name: "Homebridge 1234 5678",
-				Host: "192.168.1.100",
-				Port: 51234,
+				Host: testHostIP,
+				Port: testBridgePort1,
 			},
 			childBridge: []ChildBridge{},
 			want:        false,
@@ -523,8 +513,8 @@ func TestIsKnownChildBridge(t *testing.T) {
 			name: "child bridge included",
 			hapService: HAPAccessory{
 				Name: "TplinkSmarthome 4160",
-				Host: "192.168.1.100",
-				Port: 51250,
+				Host: testHostIP,
+				Port: testBridgePort2,
 			},
 			childBridge: []ChildBridge{},
 			want:        true,
@@ -533,8 +523,8 @@ func TestIsKnownChildBridge(t *testing.T) {
 			name: "another child bridge included",
 			hapService: HAPAccessory{
 				Name: "MyPlugin Bridge",
-				Host: "192.168.1.100",
-				Port: 51251,
+				Host: testHostIP,
+				Port: testBridgePort3,
 			},
 			childBridge: []ChildBridge{},
 			want:        true,
@@ -558,15 +548,15 @@ func TestAccessoryStatusDeepEqual(t *testing.T) {
 
 	status1 := AccessoryStatus{
 		UniqueID:    "test1",
-		ServiceName: "Test Light",
-		Values:      map[string]interface{}{"On": true},
+		ServiceName: testServiceName,
+		Values:      map[string]interface{}{testCharOn: true},
 		LastUpdated: now,
 	}
 
 	status2 := AccessoryStatus{
 		UniqueID:    "test1",
-		ServiceName: "Test Light",
-		Values:      map[string]interface{}{"On": true},
+		ServiceName: testServiceName,
+		Values:      map[string]interface{}{testCharOn: true},
 		LastUpdated: later,
 	}
 
@@ -587,14 +577,14 @@ func TestReportChange(_ *testing.T) {
 	// Test basic functionality without asserting specific output format
 	// since this function primarily handles console output
 	old := AccessoryStatus{
-		ServiceName: "Test Light",
-		Values:      map[string]interface{}{"On": false, "Brightness": 50},
+		ServiceName: testServiceName,
+		Values:      map[string]interface{}{testCharOn: false, testCharBrightness: testBrightness50},
 		LastUpdated: time.Now(),
 	}
 
 	current := AccessoryStatus{
-		ServiceName: "Test Light",
-		Values:      map[string]interface{}{"On": true, "Brightness": 75},
+		ServiceName: testServiceName,
+		Values:      map[string]interface{}{testCharOn: true, testCharBrightness: testBrightness75},
 		LastUpdated: time.Now(),
 	}
 
@@ -603,8 +593,8 @@ func TestReportChange(_ *testing.T) {
 
 	// Test with removed key
 	currentWithRemovedKey := AccessoryStatus{
-		ServiceName: "Test Light",
-		Values:      map[string]interface{}{"On": true},
+		ServiceName: testServiceName,
+		Values:      map[string]interface{}{testCharOn: true},
 		LastUpdated: time.Now(),
 	}
 
@@ -612,51 +602,12 @@ func TestReportChange(_ *testing.T) {
 
 	// Test with new key added
 	currentWithAddedKey := AccessoryStatus{
-		ServiceName: "Test Light",
-		Values:      map[string]interface{}{"On": false, "Brightness": 50, "Hue": 180},
+		ServiceName: testServiceName,
+		Values:      map[string]interface{}{testCharOn: false, testCharBrightness: testBrightness50, "Hue": testHue180},
 		LastUpdated: time.Now(),
 	}
 
 	monitor.reportChange(old, currentWithAddedKey)
-}
-
-func TestReportHAPChange(t *testing.T) {
-	tests := []struct {
-		name          string
-		accessoryName string
-		char          HAPCharacteristic
-		oldValue      interface{}
-		newValue      interface{}
-	}{
-		{
-			name:          "turn on",
-			accessoryName: "Test Light",
-			char:          HAPCharacteristic{Type: "25", Description: "On"},
-			oldValue:      0.0,
-			newValue:      1.0,
-		},
-		{
-			name:          "turn off",
-			accessoryName: "Test Light",
-			char:          HAPCharacteristic{Type: "25", Description: "On"},
-			oldValue:      1.0,
-			newValue:      0.0,
-		},
-		{
-			name:          "other characteristic",
-			accessoryName: "Test Sensor",
-			char:          HAPCharacteristic{Type: "10", Description: "Temperature"},
-			oldValue:      22.5,
-			newValue:      23.1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(_ *testing.T) {
-			// Test doesn't panic and handles the change reporting
-			reportHAPChange(tt.accessoryName, tt.char, tt.oldValue, tt.newValue)
-		})
-	}
 }
 
 func TestHasHAPAccessories(t *testing.T) {
@@ -676,7 +627,7 @@ func TestHasHAPAccessories(t *testing.T) {
 		defer server.Close()
 
 		host := "localhost"
-		port := 8080
+		port := testPort
 		// Extract port from server URL
 		serverURL := server.URL
 		_, portStr, _ := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
@@ -702,7 +653,7 @@ func TestHasHAPAccessories(t *testing.T) {
 		defer server.Close()
 
 		host := "localhost"
-		port := 8080
+		port := testPort
 		// Extract port from server URL
 		serverURL := server.URL
 		_, portStr, _ := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
@@ -732,7 +683,7 @@ func TestHasHAPAccessories(t *testing.T) {
 		defer server.Close()
 
 		host := "localhost"
-		port := 8080
+		port := testPort
 		// Extract port from server URL
 		serverURL := server.URL
 		_, portStr, _ := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
@@ -1020,265 +971,296 @@ func TestGetChildBridges(t *testing.T) {
 	})
 }
 
-func TestDiscoverHAPServices(t *testing.T) {
-	// This test verifies the function doesn't panic and handles the integration correctly
-	// We can't easily mock mDNS without significant refactoring, so we test with a very short timeout
+func TestProcessAccessories(t *testing.T) {
+	// Test processAccessories function which was previously untested
+	lastStatus := make(map[string]interface{})
+	accessories := []HAPAccessoryData{
+		{
+			AID: 1,
+			Services: []HAPService{
+				{
+					IID: 1,
+					Characteristics: []HAPCharacteristic{
+						{Type: "23", Description: "Name", Value: "Test Light", IID: 1},
+						{Type: "25", Description: "On", Value: 1.0, IID: 2},
+					},
+				},
+			},
+		},
+	}
 
-	// Temporarily set debug to false to reduce noise
-	origDebug := debug
-	debug = false
-	defer func() { debug = origDebug }()
+	result := processAccessories(accessories, "TestBridge", lastStatus)
 
-	// Use a timeout to avoid hanging
-	done := make(chan []HAPAccessory, 1)
-	go func() {
-		services := discoverHAPServices()
-		done <- services
-	}()
+	// Should detect initial discovery
+	if !strings.Contains(result.summaryLine, "Found 1 accessory: Test Light") {
+		t.Errorf("Expected initial discovery message, got: %s", result.summaryLine)
+	}
 
-	select {
-	case services := <-done:
-		// Should return a slice (may be empty if no services found)
-		if services == nil {
-			t.Errorf("discoverHAPServices() should not return nil")
-		}
-		// The test environment may or may not have HAP services
-		t.Logf("Found %d HAP services", len(services))
-	case <-time.After(1 * time.Second):
-		t.Log("discoverHAPServices() took longer than 1 second, skipping detailed verification")
-		// This is acceptable as the function is working, just taking time
+	// Test state changes
+	accessories[0].Services[0].Characteristics[1].Value = 0.0
+	result = processAccessories(accessories, "TestBridge", lastStatus)
+
+	if !strings.Contains(result.summaryLine, "changes detected") {
+		t.Errorf("Expected change detection, got: %s", result.summaryLine)
 	}
 }
 
-func TestCheckHAPAccessory(t *testing.T) {
-	t.Run("successful check", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/accessories" {
-				w.Header().Set("Content-Type", "application/json")
-				response := HAPResponse{
-					Accessories: []HAPAccessoryData{
-						{
-							AID: 1,
-							Services: []HAPService{
-								{
-									Characteristics: []HAPCharacteristic{
-										{Type: "23", Description: "Name", Value: "Test Light"},
-										{Type: "25", Description: "On", Value: 1.0},
-									},
-								},
-							},
-						},
-					},
-				}
-				json.NewEncoder(w).Encode(response)
+func TestGenerateSummaryLine(t *testing.T) {
+	tests := []struct {
+		name             string
+		initialDiscovery bool
+		accessoryCount   int
+		accessoryNames   []string
+		changesDetected  int
+		wantContains     string
+	}{
+		{
+			name:             "initial discovery single accessory",
+			initialDiscovery: true,
+			accessoryCount:   1,
+			accessoryNames:   []string{"Test Light"},
+			changesDetected:  0,
+			wantContains:     "Found 1 accessory: Test Light",
+		},
+		{
+			name:             "initial discovery multiple accessories",
+			initialDiscovery: true,
+			accessoryCount:   2,
+			accessoryNames:   []string{"Light 1", "Light 2"},
+			changesDetected:  0,
+			wantContains:     "Found 2 accessories: Light 1, Light 2",
+		},
+		{
+			name:             "no changes",
+			initialDiscovery: false,
+			accessoryCount:   3,
+			accessoryNames:   []string{"A", "B", "C"},
+			changesDetected:  0,
+			wantContains:     "No changes detected in 3 accessories",
+		},
+		{
+			name:             "changes detected",
+			initialDiscovery: false,
+			accessoryCount:   2,
+			accessoryNames:   []string{"A", "B"},
+			changesDetected:  3,
+			wantContains:     "3 changes detected",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := generateSummaryLine(tt.initialDiscovery, tt.accessoryCount, tt.accessoryNames, tt.changesDetected)
+			if !strings.Contains(result, tt.wantContains) {
+				t.Errorf("generateSummaryLine() = %q, want containing %q", result, tt.wantContains)
 			}
-		}))
-		defer server.Close()
+		})
+	}
+}
 
-		client := &http.Client{Timeout: 5 * time.Second}
-
-		// Extract host and port from server URL
-		serverURL := strings.TrimPrefix(server.URL, "http://")
-		hostPort := strings.Split(serverURL, ":")
-		testHost := hostPort[0]
-		testPort := 8080
-		if len(hostPort) > 1 {
-			if p, err := strconv.Atoi(hostPort[1]); err == nil {
-				testPort = p
-			}
-		}
-
-		acc := HAPAccessory{
-			Name: "Test Bridge",
-			Host: testHost,
-			Port: testPort,
-			ID:   "test-bridge",
-		}
-
-		lastStatus := make(map[string]interface{})
-
-		// Should complete without error
-		checkHAPAccessory(client, acc, lastStatus)
-
-		// Should have recorded the accessory state
-		expectedKey := "1_Test Light"
-		if _, exists := lastStatus[expectedKey]; !exists {
-			t.Errorf("Expected accessory state to be recorded with key '%s'", expectedKey)
-		}
-	})
-
-	t.Run("successful check with state change detection", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/accessories" {
-				w.Header().Set("Content-Type", "application/json")
-				response := HAPResponse{
-					Accessories: []HAPAccessoryData{
-						{
-							AID: 1,
-							Services: []HAPService{
-								{
-									Characteristics: []HAPCharacteristic{
-										{Type: "23", Description: "Name", Value: "Test Light"},
-										{Type: "25", Description: "On", Value: 1.0},
-									},
-								},
-							},
-						},
-					},
-				}
-				json.NewEncoder(w).Encode(response)
-			}
-		}))
-		defer server.Close()
-
-		client := &http.Client{Timeout: 5 * time.Second}
-
-		// Extract host and port from server URL
-		serverURL := strings.TrimPrefix(server.URL, "http://")
-		hostPort := strings.Split(serverURL, ":")
-		testHost := hostPort[0]
-		testPort := 8080
-		if len(hostPort) > 1 {
-			if p, err := strconv.Atoi(hostPort[1]); err == nil {
-				testPort = p
-			}
-		}
-
-		acc := HAPAccessory{
-			Name: "Test Bridge",
-			Host: testHost,
-			Port: testPort,
-			ID:   "test-bridge",
-		}
-
-		// Initialize with different state to test change detection
-		lastStatus := map[string]interface{}{
-			"1_Test Light": 0.0, // Previous state was off
-		}
-
-		// Should detect the change from off to on
-		checkHAPAccessory(client, acc, lastStatus)
-
-		// Should have updated the accessory state
-		if lastStatus["1_Test Light"] != 1.0 {
-			t.Errorf("Expected accessory state to be updated to 1.0, got %v", lastStatus["1_Test Light"])
-		}
-	})
-
-	t.Run("invalid json response", func(_ *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/accessories" {
-				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte("invalid json"))
-			}
-		}))
-		defer server.Close()
-
-		client := &http.Client{Timeout: 5 * time.Second}
-
-		// Extract host and port from server URL
-		serverURL := strings.TrimPrefix(server.URL, "http://")
-		hostPort := strings.Split(serverURL, ":")
-		testHost := hostPort[0]
-		testPort := 8080
-		if len(hostPort) > 1 {
-			if p, err := strconv.Atoi(hostPort[1]); err == nil {
-				testPort = p
-			}
-		}
-
-		acc := HAPAccessory{
-			Name: "Test Bridge",
-			Host: testHost,
-			Port: testPort,
-			ID:   "test-bridge",
-		}
-
-		lastStatus := make(map[string]interface{})
-
-		// Should handle invalid JSON gracefully
-		checkHAPAccessory(client, acc, lastStatus)
-
-		// Status should remain empty due to parsing error
-		if len(lastStatus) != 0 {
-			t.Errorf("Expected empty status map due to JSON parsing error, got %v", lastStatus)
-		}
-	})
-
-	t.Run("connection error", func(_ *testing.T) {
-		client := &http.Client{Timeout: 100 * time.Millisecond}
-		acc := HAPAccessory{
-			Name: "Test Bridge",
-			Host: "nonexistent.invalid",
-			Port: 9999,
-			ID:   "test-bridge",
-		}
-		lastStatus := make(map[string]interface{})
-
-		// Should handle error gracefully without panicking
-		checkHAPAccessory(client, acc, lastStatus)
-	})
-
-	t.Run("http error status", func(_ *testing.T) {
+func TestFetchHAPResponse(t *testing.T) {
+	t.Run("successful fetch", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusUnauthorized)
+			response := HAPResponse{
+				Accessories: []HAPAccessoryData{
+					{AID: 1, Services: []HAPService{{IID: 1, Characteristics: []HAPCharacteristic{{Type: "23", Value: "Test"}}}}},
+				},
+			}
+			json.NewEncoder(w).Encode(response)
 		}))
 		defer server.Close()
 
-		client := &http.Client{Timeout: 5 * time.Second}
-
-		// Extract host and port from server URL
 		serverURL := strings.TrimPrefix(server.URL, "http://")
 		hostPort := strings.Split(serverURL, ":")
-		testHost := hostPort[0]
-		testPort := 8080
-		if len(hostPort) > 1 {
-			if p, err := strconv.Atoi(hostPort[1]); err == nil {
-				testPort = p
-			}
+		port, _ := strconv.Atoi(hostPort[1])
+
+		client := &http.Client{Timeout: 5 * time.Second}
+		acc := HAPAccessory{Name: "Test", Host: hostPort[0], Port: port}
+		var output []string
+
+		hapResp, err := fetchHAPResponse(client, acc, &output)
+		if err != nil {
+			t.Errorf("fetchHAPResponse() error = %v", err)
 		}
-
-		acc := HAPAccessory{
-			Name: "Test Bridge",
-			Host: testHost,
-			Port: testPort,
-			ID:   "test-bridge",
+		if len(hapResp.Accessories) != 1 {
+			t.Errorf("Expected 1 accessory, got %d", len(hapResp.Accessories))
 		}
+	})
 
-		lastStatus := make(map[string]interface{})
+	t.Run("connection error", func(t *testing.T) {
+		client := &http.Client{Timeout: 100 * time.Millisecond}
+		acc := HAPAccessory{Name: "Test", Host: "nonexistent.invalid", Port: 12345}
+		var output []string
 
-		// Should handle 401 error gracefully
-		checkHAPAccessory(client, acc, lastStatus)
+		_, err := fetchHAPResponse(client, acc, &output)
+		if err == nil {
+			t.Error("Expected error for invalid host")
+		}
+		if len(output) == 0 {
+			t.Error("Expected error output")
+		}
 	})
 }
 
-func TestDiscoverHAPServicesIntegration(t *testing.T) {
-	// This test verifies the integration between mDNS discovery and HAP service parsing
-	// without actually depending on network mDNS (which would be unreliable in tests)
+func TestChildBridgeListsEqual(t *testing.T) {
+	bridge1 := ChildBridge{Name: "Bridge1", Username: "user1"}
+	bridge2 := ChildBridge{Name: "Bridge2", Username: "user2"}
 
-	t.Run("service discovery integration", func(t *testing.T) {
-		// Temporarily disable debug output for cleaner test output
-		origDebug := debug
-		debug = false
-		defer func() { debug = origDebug }()
+	tests := []struct {
+		name string
+		a    []ChildBridge
+		b    []ChildBridge
+		want bool
+	}{
+		{"both empty", []ChildBridge{}, []ChildBridge{}, true},
+		{"same bridges", []ChildBridge{bridge1, bridge2}, []ChildBridge{bridge1, bridge2}, true},
+		{"different order", []ChildBridge{bridge1, bridge2}, []ChildBridge{bridge2, bridge1}, true},
+		{"different length", []ChildBridge{bridge1}, []ChildBridge{bridge1, bridge2}, false},
+		{"different bridges", []ChildBridge{bridge1}, []ChildBridge{bridge2}, false},
+	}
 
-		// Use a timeout to avoid hanging
-		done := make(chan []HAPAccessory, 1)
-		go func() {
-			services := discoverHAPServices()
-			done <- services
-		}()
-
-		select {
-		case services := <-done:
-			// Should return a slice (may be empty if no services found)
-			if services == nil {
-				t.Errorf("discoverHAPServices() should not return nil")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := childBridgeListsEqual(tt.a, tt.b); got != tt.want {
+				t.Errorf("childBridgeListsEqual() = %v, want %v", got, tt.want)
 			}
-			// In test environment, we don't expect real HAP services
-			t.Logf("Discovery completed, found %d HAP services", len(services))
-		case <-time.After(15 * time.Second): // 15 second timeout to be safe
-			t.Log("discoverHAPServices() took longer than 15 seconds, which can happen with network operations")
+		})
+	}
+}
+
+func TestTrimServiceName(t *testing.T) {
+	tests := []struct {
+		name        string
+		serviceName string
+		want        string
+	}{
+		{"removes last field", "My Service Something", "My Service"},
+		{"handles multiple words", "Living Room Light Something", "Living Room Light"},
+		{"single word unchanged", "Light", "Light"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := trimServiceName(tt.serviceName); got != tt.want {
+				t.Errorf("trimServiceName() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Test run function directly - covers monitoring logic without CLI dependencies
+func TestRunFunction(_ *testing.T) {
+	// Test the run function which has lower coverage
+	originalHost := host
+	originalPort := port
+	defer func() {
+		host = originalHost
+		port = originalPort
+	}()
+
+	// Mock server for testing
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/accessories" {
+			w.Header().Set("Content-Type", "application/json")
+			testAccessories := []AccessoryStatus{
+				{UniqueID: "test1", ServiceName: testServiceName, Values: map[string]interface{}{testCharOn: true}},
+			}
+			_ = json.NewEncoder(w).Encode(testAccessories)
 		}
-	})
+	}))
+	defer server.Close()
+
+	// Extract port from server URL and update test environment
+	serverURL := strings.TrimPrefix(server.URL, "http://")
+	hostPort := strings.Split(serverURL, ":")
+	host = hostPort[0]
+	if len(hostPort) > 1 {
+		if p, err := strconv.Atoi(hostPort[1]); err == nil {
+			port = p
+		}
+	}
+
+	baseURL := server.URL
+	interval := testMDNSTimeout100ms
+
+	monitor := &StatusMonitor{
+		baseURL:    baseURL,
+		interval:   interval,
+		lastStatus: make(map[string]AccessoryStatus),
+		client:     &http.Client{Timeout: testMDNSTimeout5s},
+	}
+
+	// Test single check
+	monitor.run(1)
+}
+
+// Test for performDiscovery function
+func TestPerformDiscovery(_ *testing.T) {
+	originalCount := count
+	defer func() { count = originalCount }()
+
+	count = 0 // Discovery-only mode
+
+	var cachedChildBridges []ChildBridge
+	var cachedHAPServices []HAPAccessory
+
+	// Should complete without panicking
+	performDiscovery(&cachedChildBridges, &cachedHAPServices)
+}
+
+// Test displayDiscoveryResults function
+func TestDisplayDiscoveryResults(_ *testing.T) {
+	// Test with empty results
+	displayDiscoveryResults([]ChildBridge{}, []HAPAccessory{})
+
+	// Test with some results
+	childBridges := []ChildBridge{
+		{Name: "Test Bridge", Plugin: "test-plugin"},
+	}
+	hapServices := []HAPAccessory{
+		{Name: "Test Service", Host: testHostIP, Port: testPort},
+	}
+	displayDiscoveryResults(childBridges, hapServices)
+}
+
+// Test printOutputSync function
+func TestPrintOutputSync(_ *testing.T) {
+	testOutput := []string{"test line 1", "test line 2"}
+	var mu sync.Mutex
+
+	// Should not panic
+	printOutputSync(testOutput, &mu)
+}
+
+// Test filterServicesByExpectedNames function
+func TestFilterServicesByExpectedNames(t *testing.T) {
+	// The function trims the last field, so "Expected Service 1234" becomes "Expected Service"
+	serviceNames := []string{"Expected Service 1234", "Unexpected Service 5678"}
+	expectedNames := []string{"Expected Service"}
+
+	result := filterServicesByExpectedNames(serviceNames, expectedNames)
+
+	if len(result) != 1 {
+		t.Errorf("Expected 1 filtered service, got %d", len(result))
+		return
+	}
+	if result[0] != "Expected Service 1234" {
+		t.Errorf("Expected 'Expected Service 1234', got %s", result[0])
+	}
+}
+
+// Test discoverHAPServicesWithTimeoutAndFilter function
+func TestDiscoverHAPServicesWithTimeoutAndFilter(t *testing.T) {
+	// Test with very short timeout to avoid hanging
+	timeout := testMDNSTimeout100ms
+
+	// Test should complete without hanging
+	services := discoverHAPServicesWithTimeoutAndFilter(timeout, []string{})
+
+	// Services may be empty due to network conditions, but function should not hang
+	if services == nil {
+		t.Log("No services found, which is acceptable for network-dependent test")
+	} else {
+		t.Logf("Found %d services", len(services))
+	}
 }

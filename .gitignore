@@ -6,6 +6,8 @@
 # Go binaries
 hb-clog
 hb-clog.exe
+homebridge-captains-log
+homebridge-captains-log.exe
 
 # Go build artifacts
 *.exe
@@ -27,6 +29,11 @@ vendor/
 .codeql-db/
 codeql-results.sarif
 
+# Security scan reports
+gosec-report.sarif
+govulncheck-report.json
+deps-graph.txt
+
 # Claude Code settings (development-specific)
 .claude/
 
@@ -44,3 +51,4 @@ codeql-results.sarif
 
 # Go coverage files
 coverage.out
+coverage.html

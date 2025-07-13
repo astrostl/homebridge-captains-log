@@ -1,5 +1,7 @@
 # Homebridge Captain's Log
 
+> **⚠️ Disclaimer**: This software was "vibe coded" with Claude Code. Use at your own risk. No warranty or guarantee is provided.
+
 A Go CLI tool to monitor Homebridge accessory status changes in real-time. Track when lights turn on/off, outlets switch states, and other HomeKit accessory changes across your smart home.
 
 ## Features
@@ -74,7 +76,7 @@ make build
 ### HTTP API Mode
 - Monitors main bridge only via Homebridge REST API  
 - Simpler setup but limited to main bridge accessories
-- Use `--http` flag to enable
+- Use `--main` flag to enable
 
 ## Output Example
 
@@ -147,6 +149,10 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 | `-c, --count` | Number of checks before exit |
 | `-d, --debug` | Enable debug output |
 | `-m, --main` | Monitor main bridge only instead of child bridges |
+
+## Roadmap
+
+ULANZI TC001 display output support (via AWTRIX3 API)
 
 ## License
 
