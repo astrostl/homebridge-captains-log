@@ -31,10 +31,13 @@ func NewMDNSClient(timeout time.Duration) *MDNSClient {
 	}
 }
 
-// BrowseServices discovers all services of the specified type
-// Equivalent to: dns-sd -B _hap._tcp
-func (c *MDNSClient) BrowseServices(_ context.Context, serviceType string) ([]string, error) {
-	debugf("Starting mDNS browse for service type: %s\n", serviceType)
+// BrowseServicesWithEarlyCompletion discovers services with early completion when expected count is reached
+func (c *MDNSClient) BrowseServicesWithEarlyCompletion(_ context.Context, serviceType string, expectedCount int) ([]string, error) {
+	if expectedCount > 0 {
+		debugf("Starting mDNS browse for service type: %s (expecting %d services, will complete early)\n", serviceType, expectedCount)
+	} else {
+		debugf("Starting mDNS browse for service type: %s (unknown count, using full timeout)\n", serviceType)
+	}
 
 	// Create multicast UDP connection
 	mcastAddr, err := net.ResolveUDPAddr("udp4", "224.0.0.251:5353")
@@ -79,8 +82,18 @@ func (c *MDNSClient) BrowseServices(_ context.Context, serviceType string) ([]st
 	var services []string
 	serviceMap := make(map[string]bool) // Deduplicate services
 	deadline := time.Now().Add(c.timeout)
+	
+	// Add grace period after finding expected count to catch any remaining services
+	var gracePeriodEnd time.Time
+	foundExpectedCount := false
 
 	for time.Now().Before(deadline) {
+		// Check if we should exit early due to grace period completion
+		if foundExpectedCount && !gracePeriodEnd.IsZero() && time.Now().After(gracePeriodEnd) {
+			debugf("Grace period completed after finding expected services, exiting early\n")
+			break
+		}
+
 		if err := conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
 			continue
 		}
@@ -121,6 +134,13 @@ func (c *MDNSClient) BrowseServices(_ context.Context, serviceType string) ([]st
 							debugf("Found service: %s\n", serviceName)
 							services = append(services, serviceName)
 							serviceMap[serviceName] = true
+							
+							// Check if we've found the expected number of services
+							if expectedCount > 0 && len(services) >= expectedCount && !foundExpectedCount {
+								debugf("Found expected %d services, starting 500ms grace period\n", expectedCount)
+								foundExpectedCount = true
+								gracePeriodEnd = time.Now().Add(500 * time.Millisecond)
+							}
 						}
 					}
 				}
@@ -130,6 +150,12 @@ func (c *MDNSClient) BrowseServices(_ context.Context, serviceType string) ([]st
 
 	debugf("Browse completed, found %d services\n", len(services))
 	return services, nil
+}
+
+// BrowseServices discovers all services of the specified type
+// Equivalent to: dns-sd -B _hap._tcp
+func (c *MDNSClient) BrowseServices(ctx context.Context, serviceType string) ([]string, error) {
+	return c.BrowseServicesWithEarlyCompletion(ctx, serviceType, -1)
 }
 
 // LookupService gets detailed information about a specific service
@@ -303,13 +329,19 @@ func (c *MDNSClient) DiscoverHomebridgeServices(ctx context.Context) ([]MDNSServ
 
 // DiscoverHomebridgeServicesWithFilter discovers Homebridge HAP services with optional name filtering
 func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, expectedNames []string) ([]MDNSService, error) {
-	debugf("Starting Homebridge service discovery with two-phase timeout\n")
+	debugf("Starting Homebridge service discovery with optimized timing\n")
 
-	// Phase 1: Browse for all _hap._tcp services (3 seconds)
+	// Phase 1: Browse for all _hap._tcp services (max 3 seconds, but complete early if possible)
 	browseCtx, browseCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer browseCancel()
 	
-	serviceNames, err := c.BrowseServices(browseCtx, "_hap._tcp")
+	// Pass expected count to allow early completion
+	expectedServiceCount := len(expectedNames)
+	if expectedServiceCount == 0 {
+		expectedServiceCount = -1 // Unknown count, use full timeout
+	}
+	
+	serviceNames, err := c.BrowseServicesWithEarlyCompletion(browseCtx, "_hap._tcp", expectedServiceCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to browse services: %w", err)
 	}
@@ -326,7 +358,7 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 		servicesToLookup = serviceNames
 	}
 
-	// Phase 2: Parallel lookups (7 additional seconds)
+	// Phase 2: Parallel lookups (max 7 seconds, but complete as soon as all lookups finish)
 	lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer lookupCancel()
 
