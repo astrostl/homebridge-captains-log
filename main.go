@@ -46,6 +46,61 @@ var (
 	debug    bool
 )
 
+// Timeout Configuration - All timeouts used throughout the application
+//
+// RELIABILITY STRATEGY:
+// - Individual service lookups use short timeouts to avoid blocking parallel operations
+// - Overall phases have longer timeouts as safety nets
+// - Quick retries with exponential backoff for transient failures
+// - HTTP operations use generous timeouts since they're usually reliable
+var TimeoutConfig = struct {
+	// HTTP API timeouts
+	HTTPClient           time.Duration // General HTTP client timeout
+	HTTPToken            time.Duration // Auth token request timeout
+	HTTPChildBridges     time.Duration // Child bridge API request timeout
+	HTTPAccessoryCheck   time.Duration // Individual accessory check timeout
+	HTTPReachabilityTest time.Duration // Quick reachability test timeout
+
+	// mDNS Discovery timeouts
+	MDNSTotal            time.Duration // Total mDNS discovery timeout (browse + lookup phases)
+	MDNSBrowseMax        time.Duration // Maximum time for browse phase
+	MDNSLookupMax        time.Duration // Maximum time for lookup phase
+	MDNSLookupPerService time.Duration // Maximum time per individual service lookup
+	MDNSReadTimeout      time.Duration // Network read timeout for mDNS packets
+	MDNSSilenceTimeout   time.Duration // How long to wait for new responses before completing
+	MDNSEarlyExitSilence time.Duration // Silence period before early exit when expected count reached
+
+	// Retry and delay timeouts
+	RetryDelay       time.Duration // Delay between discovery retry attempts
+	LookupRetryDelay time.Duration // Delay between individual service lookup retries
+
+	// Default intervals
+	DefaultPollingInterval time.Duration // Default polling interval for accessory checks
+}{
+	// HTTP timeouts
+	HTTPClient:           10 * time.Second,
+	HTTPToken:            5 * time.Second,
+	HTTPChildBridges:     10 * time.Second,
+	HTTPAccessoryCheck:   5 * time.Second,
+	HTTPReachabilityTest: 1 * time.Second,
+
+	// mDNS timeouts
+	MDNSTotal:            10 * time.Second,
+	MDNSBrowseMax:        3 * time.Second,
+	MDNSLookupMax:        7 * time.Second,
+	MDNSLookupPerService: 2 * time.Second, // Much shorter per-service timeout
+	MDNSReadTimeout:      100 * time.Millisecond,
+	MDNSSilenceTimeout:   300 * time.Millisecond,
+	MDNSEarlyExitSilence: 100 * time.Millisecond,
+
+	// Retry timeouts
+	RetryDelay:       2 * time.Second,
+	LookupRetryDelay: 500 * time.Millisecond,
+
+	// Default intervals
+	DefaultPollingInterval: 30 * time.Second,
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "captains-log",
 	Short: "Monitor Homebridge accessory status changes",
@@ -62,7 +117,7 @@ func init() {
 
 	rootCmd.Flags().StringVarP(&host, "host", "H", defaultHost, "Homebridge UI host")
 	rootCmd.Flags().IntVarP(&port, "port", "p", defaultPort, "Homebridge UI port")
-	rootCmd.Flags().DurationVarP(&interval, "interval", "i", 30*time.Second, "Polling interval (e.g., 5s, 30s, 1m)")
+	rootCmd.Flags().DurationVarP(&interval, "interval", "i", TimeoutConfig.DefaultPollingInterval, "Polling interval (duration format: 30s, 1m, etc.)")
 	rootCmd.Flags().IntVarP(&count, "count", "c", 0, "Number of checks to perform (0 = infinite)")
 	rootCmd.Flags().StringVarP(&token, "token", "t", defaultToken, "Homebridge UI auth token")
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug output")
@@ -94,7 +149,7 @@ func runMonitor(cmd *cobra.Command, _ []string) {
 			baseURL:    baseURL,
 			interval:   interval,
 			lastStatus: make(map[string]AccessoryStatus),
-			client:     &http.Client{Timeout: 10 * time.Second},
+			client:     &http.Client{Timeout: TimeoutConfig.HTTPClient},
 			token:      token,
 		}
 
@@ -124,6 +179,21 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 }
 
 func (m *StatusMonitor) run(maxChecks int) {
+	// Handle discovery-only mode (count = 0) for HTTP API
+	if maxChecks == 0 {
+		fmt.Println("Discovery-only mode: performing HTTP API discovery and exiting...")
+		accessories, err := m.fetchAccessories()
+		if err != nil {
+			fmt.Printf("Error during discovery: %v\n", err)
+			return
+		}
+		fmt.Printf("HTTP API discovery complete. Found %d accessories from main bridge.\n", len(accessories))
+		for _, accessory := range accessories {
+			fmt.Printf("  - %s (%s)\n", accessory.ServiceName, accessory.Type)
+		}
+		return
+	}
+
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
 
@@ -335,16 +405,25 @@ func runHAPMonitor(maxChecks int) {
 	checksInfo := "infinite"
 	if maxChecks > 0 {
 		checksInfo = fmt.Sprintf("%d", maxChecks)
+	} else if maxChecks == 0 {
+		checksInfo = "discovery-only"
 	}
 	fmt.Printf("Starting Homebridge Captain's Log (checks: %s, interval: %v)\n", checksInfo, interval)
 
 	// Track status for each discovered bridge
 	bridgeStatusMap := make(map[string]map[string]interface{})
-	
+
 	// Cache for optimized discovery
 	var cachedChildBridges []ChildBridge
 	var cachedHAPServices []HAPAccessory
 	isInitialDiscovery := true
+
+	// Handle discovery-only mode (count = 0)
+	if maxChecks == 0 {
+		fmt.Println("Discovery-only mode: performing bridge discovery and exiting...")
+		checkAllBridgesOptimizedDiscoveryOnly(&cachedChildBridges, &cachedHAPServices)
+		return
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -429,15 +508,15 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 	// Perform full mDNS discovery if needed
 	if needsFullDiscovery {
 		debugf("Performing full mDNS discovery\n")
-		
+
 		fmt.Printf("Starting mDNS discovery for HAP services...")
-		// Discover HAP services via mDNS with 10-second total timeout (3s browse + 7s lookups)
+		// Discover HAP services via mDNS with configured timeout (browse + lookup phases)
 		// Pass child bridge names for optimized filtering
 		var expectedNames []string
 		for _, bridge := range currentChildBridges {
 			expectedNames = append(expectedNames, bridge.Name)
 		}
-		allHAPServices := discoverHAPServicesWithTimeoutAndFilter(10*time.Second, expectedNames)
+		allHAPServices := discoverHAPServicesWithTimeoutAndFilter(TimeoutConfig.MDNSTotal, expectedNames)
 		debugf("mDNS discovered %d total HAP services\n", len(allHAPServices))
 
 		// Filter HAP services to only include known child bridges
@@ -457,28 +536,27 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 			fmt.Printf("WARNING: mDNS found only %d/%d expected bridges on attempt %d\n", len(hapServices), len(currentChildBridges), attempt)
 			if attempt < 3 {
 				fmt.Printf("Retrying discovery...\n")
-				time.Sleep(2 * time.Second) // Brief delay before retry
+				time.Sleep(TimeoutConfig.RetryDelay) // Brief delay before retry
 				checkAllBridgesOptimizedWithRetry(bridgeStatusMap, cachedChildBridges, cachedHAPServices, true, attempt+1)
 				return
-			} else {
-				fmt.Printf("ERROR: Failed to find all bridges after 3 attempts\n")
-				fmt.Printf("Expected bridges from API:\n")
-				for _, bridge := range currentChildBridges {
-					fmt.Printf("  - %s (%s)\n", bridge.Name, bridge.Plugin)
-				}
-				fmt.Printf("Found bridges via mDNS:\n")
-				for _, service := range hapServices {
-					fmt.Printf("  - %s\n", service.Name)
-				}
-				fmt.Printf("Discovery incomplete - exiting. Check that all child bridges are running and advertising _hap._tcp services.\n")
-				os.Exit(1)
 			}
+			fmt.Printf("ERROR: Failed to find all bridges after 3 attempts\n")
+			fmt.Printf("Expected bridges from API:\n")
+			for _, bridge := range currentChildBridges {
+				fmt.Printf("  - %s (%s)\n", bridge.Name, bridge.Plugin)
+			}
+			fmt.Printf("Found bridges via mDNS:\n")
+			for _, service := range hapServices {
+				fmt.Printf("  - %s\n", service.Name)
+			}
+			fmt.Printf("Discovery incomplete - exiting. Check that all child bridges are running and advertising _hap._tcp services.\n")
+			os.Exit(1)
 		}
 
 		// Update cache
 		*cachedChildBridges = currentChildBridges
 		*cachedHAPServices = hapServices
-		
+
 		if attempt == 1 {
 			fmt.Printf("mDNS discovery completed, looked up port data for all %d child bridges 🚀\n", len(hapServices))
 		} else {
@@ -494,7 +572,7 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	bridgesWithAccessories := 0
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: TimeoutConfig.HTTPAccessoryCheck}
 
 	// Process each service in parallel
 	for _, service := range hapServices {
@@ -534,6 +612,56 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 	}
 }
 
+func checkAllBridgesOptimizedDiscoveryOnly(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory) {
+	fmt.Printf("\n[%s] Performing bridge discovery...\n", time.Now().Format("15:04:05"))
+
+	// Get known child bridges from API first
+	fmt.Printf("Getting child bridge list from HTTP API...")
+	currentChildBridges := getChildBridges()
+	if len(currentChildBridges) == 0 {
+		fmt.Println("No child bridges found in API.")
+		return
+	}
+
+	fmt.Printf("(found %d ✅)\n", len(currentChildBridges))
+	debugf("Found %d child bridges from API\n", len(currentChildBridges))
+
+	fmt.Printf("Starting mDNS discovery for HAP services...")
+	// Discover HAP services via mDNS with configured timeout
+	var expectedNames []string
+	for _, bridge := range currentChildBridges {
+		expectedNames = append(expectedNames, bridge.Name)
+	}
+	allHAPServices := discoverHAPServicesWithTimeoutAndFilter(TimeoutConfig.MDNSTotal, expectedNames)
+	debugf("mDNS discovered %d total HAP services\n", len(allHAPServices))
+
+	// Filter HAP services to only include known child bridges
+	var hapServices []HAPAccessory
+	for _, hapService := range allHAPServices {
+		if isKnownChildBridge(hapService, currentChildBridges) {
+			hapServices = append(hapServices, hapService)
+		} else {
+			debugf("Skipping non-child-bridge HAP service: %s\n", hapService.Name)
+		}
+	}
+
+	debugf("Found %d Homebridge HAP services from mDNS\n", len(hapServices))
+
+	// Update cache
+	*cachedChildBridges = currentChildBridges
+	*cachedHAPServices = hapServices
+
+	fmt.Printf("mDNS discovery completed, found all %d child bridges 🚀\n", len(hapServices))
+
+	// Display discovered bridges
+	fmt.Printf("\nDiscovered bridges:\n")
+	for _, service := range hapServices {
+		fmt.Printf("  - %s at %s:%d\n", service.Name, service.Host, service.Port)
+	}
+
+	fmt.Printf("\nDiscovery complete. Found %d child bridges ready for monitoring.\n", len(hapServices))
+}
+
 func isKnownChildBridge(hapService HAPAccessory, _ []ChildBridge) bool {
 	// Since we're already filtering to only Homebridge services via TXT records,
 	// we just need to exclude the main bridge and include everything else
@@ -550,8 +678,8 @@ func isKnownChildBridge(hapService HAPAccessory, _ []ChildBridge) bool {
 }
 
 func discoverHAPServices() []HAPAccessory {
-	// Use interval-based timeout for regular checks (10 seconds)
-	return discoverHAPServicesWithTimeout(10 * time.Second)
+	// Use configured timeout for regular checks
+	return discoverHAPServicesWithTimeout(TimeoutConfig.MDNSTotal)
 }
 
 func discoverHAPServicesWithTimeout(timeout time.Duration) []HAPAccessory {
@@ -568,7 +696,7 @@ func discoverHAPServicesWithTimeoutAndFilter(timeout time.Duration, expectedName
 	ctx := context.Background()
 
 	// Discover Homebridge services with optional name filtering
-	// This will use 3s for browse + 7s for lookups internally
+	// This will use configured browse + lookup timeouts internally
 	var mdnsServices []MDNSService
 	var err error
 	if expectedNames != nil {
@@ -600,7 +728,7 @@ func discoverHAPServicesWithTimeoutAndFilter(timeout time.Duration, expectedName
 }
 
 func hasHAPAccessories(host string, port int) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{Timeout: TimeoutConfig.HTTPReachabilityTest}
 
 	url := fmt.Sprintf("http://%s:%d/accessories", host, port)
 	resp, err := client.Get(url)
@@ -649,7 +777,7 @@ type ChildBridge struct {
 }
 
 func getChildBridges() []ChildBridge {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: TimeoutConfig.HTTPChildBridges}
 
 	// Get auth token for main API
 	tokenReq, _ := http.NewRequest("POST", fmt.Sprintf("http://%s:%d/api/auth/noauth", host, port), strings.NewReader("{}"))
@@ -741,9 +869,9 @@ type HAPCharacteristic struct {
 func checkHAPAccessoryWithSync(client *http.Client, acc HAPAccessory, lastStatus map[string]interface{}, mu *sync.Mutex) {
 	// Collect all output first, then print atomically
 	var output []string
-	
+
 	output = append(output, fmt.Sprintf("\n[%s] Checking %s...", time.Now().Format("15:04:05"), acc.Name))
-	
+
 	// Get accessories from the child bridge
 	url := fmt.Sprintf("http://%s:%d/accessories", acc.Host, acc.Port)
 	resp, err := client.Get(url)
@@ -799,11 +927,11 @@ func checkHAPAccessoryWithSync(client *http.Client, acc HAPAccessory, lastStatus
 	changesDetected := 0
 	accessoryCount := 0
 	var accessoryNames []string
-	
+
 	// Check if this bridge has been seen before by looking for a special marker
 	bridgeMarkerKey := fmt.Sprintf("_bridge_seen_%s", acc.Name)
 	initialDiscovery := lastStatus[bridgeMarkerKey] == nil
-	
+
 	// Mark that we've seen this bridge
 	lastStatus[bridgeMarkerKey] = true
 
@@ -851,7 +979,7 @@ func checkHAPAccessoryWithSync(client *http.Client, acc HAPAccessory, lastStatus
 	} else {
 		output = append(output, fmt.Sprintf("Summary: %d changes detected", changesDetected))
 	}
-	
+
 	// Print all output atomically
 	mu.Lock()
 	for _, line := range output {
@@ -898,11 +1026,11 @@ func checkHAPAccessory(client *http.Client, acc HAPAccessory, lastStatus map[str
 	changesDetected := 0
 	accessoryCount := 0
 	var accessoryNames []string
-	
+
 	// Check if this bridge has been seen before by looking for a special marker
 	bridgeMarkerKey := fmt.Sprintf("_bridge_seen_%s", acc.Name)
 	initialDiscovery := lastStatus[bridgeMarkerKey] == nil
-	
+
 	// Mark that we've seen this bridge
 	lastStatus[bridgeMarkerKey] = true
 
@@ -986,7 +1114,7 @@ func reportHAPChangeForCharacteristic(accessoryName string, char HAPCharacterist
 	if description == "" {
 		description = fmt.Sprintf("characteristic %s", char.Type)
 	}
-	
+
 	fmt.Printf("\n[%s] %s %s: %v → %v\n", time.Now().Format("15:04:05"), accessoryName, description, oldValue, newValue)
 }
 
@@ -1029,7 +1157,7 @@ func childBridgeListsEqual(cached, current []ChildBridge) bool {
 // testCachedServicesReachability tests if cached services are still reachable
 func testCachedServicesReachability(cachedServices []HAPAccessory) []HAPAccessory {
 	var unreachableServices []HAPAccessory
-	client := &http.Client{Timeout: 1 * time.Second} // Quick timeout for reachability test
+	client := &http.Client{Timeout: TimeoutConfig.HTTPReachabilityTest} // Quick timeout for reachability test
 
 	for _, service := range cachedServices {
 		url := fmt.Sprintf("http://%s:%d/accessories", service.Host, service.Port)

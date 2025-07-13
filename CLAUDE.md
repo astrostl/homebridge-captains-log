@@ -100,6 +100,7 @@ go build -o hb-clog
 ./hb-clog -d  # Enable debug output 
 ./hb-clog -i 5s  # Poll every 5 seconds
 ./hb-clog -c 3  # Check 3 times then exit
+./hb-clog -c 0  # Discovery-only mode: discover bridges and exit
 ```
 
 ## Debug Mode
@@ -114,13 +115,42 @@ Example: `./hb-clog -d -i 2s`
 
 ## Testing
 
+### Claude Testing
+Claude can run the binary directly to test functionality:
+```bash
+./hb-clog -d -c 0  # Debug mode, discovery-only (fastest test)
+./hb-clog -d -c 1  # Debug mode, single check
+./hb-clog -c 2     # Two checks then exit
+```
+
+### Manual Testing
 When debugging or testing, always use the count flag to limit runs:
 ```bash
-./hb-clog -d -c 2 -i 5s  # Debug mode, 2 checks, 5 second intervals
-./hb-clog -c 1           # Single check then exit
+./hb-clog -c 0              # Discovery-only mode (fastest test)
+./hb-clog -d -c 2 -i 5s     # Debug mode, 2 checks, 5 second intervals
+./hb-clog -c 1              # Single check then exit
 ```
 
 ## Development Guidelines
+
+**CRITICAL: Timeout Configuration Policy**
+- 🚨 **ALL timeouts MUST use TimeoutConfig - NO EXCEPTIONS**
+- 🚨 **ZERO hardcoded timeout values in production code**
+- 🚨 **Production code violating this policy will be REJECTED**
+- 🚨 **Every time value must reference TimeoutConfig, including function parameters, variables, and context timeouts**
+- ❌ Don't use `10 * time.Second` - use `TimeoutConfig.HTTPClient`
+- ❌ Don't use `100 * time.Millisecond` - use `TimeoutConfig.MDNSReadTimeout`
+- ❌ Don't use `time.Sleep(5 * time.Second)` - use `time.Sleep(TimeoutConfig.RetryDelay)`
+- ❌ Don't use `context.WithTimeout(ctx, 2*time.Second)` - use `TimeoutConfig.MDNSLookupPerService`
+- ❌ Don't use hardcoded numbers in timeout-related code comments
+- ✅ Add new timeout categories to TimeoutConfig when needed
+- ✅ Tests may use hardcoded timeouts for controlled testing scenarios only
+- ✅ All timeouts managed from single location for reliability
+
+**Timeout Policy Enforcement:**
+- Search for violations: `grep -r "\d+\s*\*\s*time\." --include="*.go" .` (should return empty for production code)
+- Every timeout must trace back to TimeoutConfig for maintainability and consistency
+- When adding new timeout-sensitive code, first add the timeout to TimeoutConfig, then reference it
 
 **CRITICAL: mDNS-Only Discovery Policy**
 - 🚨 **NEVER implement port scanning or any fallback discovery mechanisms**
@@ -191,3 +221,40 @@ This approach is necessary because:
 **References:**
 - RFC 6762: https://datatracker.ietf.org/doc/html/rfc6762 (mDNS specification)
 - Avahi: https://github.com/avahi/avahi (well-known mDNS implementation)
+
+## Timeout Configuration
+
+**ALL timeouts are centralized in `TimeoutConfig` in main.go for reliability and maintainability.**
+
+### Current Timeout Categories:
+
+```go
+// HTTP API timeouts
+HTTPClient:              10 * time.Second,  // General HTTP client timeout
+HTTPToken:               5 * time.Second,   // Auth token request timeout  
+HTTPChildBridges:        10 * time.Second,  // Child bridge API request timeout
+HTTPAccessoryCheck:      5 * time.Second,   // Individual accessory check timeout
+HTTPReachabilityTest:    1 * time.Second,   // Quick reachability test timeout
+
+// mDNS Discovery timeouts  
+MDNSTotal:               10 * time.Second,  // Total mDNS discovery timeout
+MDNSBrowseMax:           3 * time.Second,   // Maximum time for browse phase
+MDNSLookupMax:           7 * time.Second,   // Maximum time for lookup phase  
+MDNSLookupPerService:    2 * time.Second,   // Maximum time per individual service lookup
+MDNSReadTimeout:         100 * time.Millisecond, // Network read timeout for mDNS packets
+MDNSSilenceTimeout:      300 * time.Millisecond, // How long to wait for new responses
+MDNSEarlyExitSilence:    100 * time.Millisecond, // Silence period before early exit
+
+// Retry and delay timeouts
+RetryDelay:              2 * time.Second,   // Delay between discovery retry attempts
+LookupRetryDelay:        500 * time.Millisecond, // Delay between service lookup retries
+DefaultPollingInterval:  30 * time.Second,  // Default polling interval for accessory checks
+```
+
+### Timeout Policy Enforcement:
+
+1. **Search for hardcoded timeouts**: `grep -r "\d+\s*\*\s*time\." --include="*.go"`
+2. **All timeouts must reference TimeoutConfig**: No exceptions
+3. **Tests should use TimeoutConfig when possible**: For consistency  
+4. **Add new categories as needed**: Don't hardcode, extend the config
+5. **Document timeout relationships**: Some timeouts depend on others (e.g., MDNSTotal = MDNSBrowseMax + MDNSLookupMax)

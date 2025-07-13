@@ -78,23 +78,29 @@ func (c *MDNSClient) BrowseServicesWithEarlyCompletion(_ context.Context, servic
 
 	debugf("Sent mDNS query for %s\n", serviceType)
 
-	// Listen for responses
+	// Listen for responses with intelligent completion
 	var services []string
 	serviceMap := make(map[string]bool) // Deduplicate services
 	deadline := time.Now().Add(c.timeout)
-	
-	// Add grace period after finding expected count to catch any remaining services
-	var gracePeriodEnd time.Time
-	foundExpectedCount := false
+
+	// Track when we last received a new service to detect when responses stop
+	var lastNewServiceTime time.Time
+	silenceTimeout := TimeoutConfig.MDNSSilenceTimeout // Complete after configured time of no new services
 
 	for time.Now().Before(deadline) {
-		// Check if we should exit early due to grace period completion
-		if foundExpectedCount && !gracePeriodEnd.IsZero() && time.Now().After(gracePeriodEnd) {
-			debugf("Grace period completed after finding expected services, exiting early\n")
+		// If we've found services and had silence for the timeout period, we're likely done
+		if len(services) > 0 && !lastNewServiceTime.IsZero() && time.Since(lastNewServiceTime) > silenceTimeout {
+			debugf("No new services for %v, completing with %d services\n", silenceTimeout, len(services))
 			break
 		}
 
-		if err := conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+		// Also complete early if we've found the expected count and had some silence
+		if expectedCount > 0 && len(services) >= expectedCount && !lastNewServiceTime.IsZero() && time.Since(lastNewServiceTime) > TimeoutConfig.MDNSEarlyExitSilence {
+			debugf("Found expected %d services with early exit silence period, completing\n", expectedCount)
+			break
+		}
+
+		if err := conn.SetReadDeadline(time.Now().Add(TimeoutConfig.MDNSReadTimeout)); err != nil {
 			continue
 		}
 
@@ -102,7 +108,7 @@ func (c *MDNSClient) BrowseServicesWithEarlyCompletion(_ context.Context, servic
 		n, _, err := conn.ReadFrom(buffer)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
+				continue // This is expected - just means no response in configured read timeout window
 			}
 			debugf("Read error: %v\n", err)
 			continue
@@ -118,6 +124,7 @@ func (c *MDNSClient) BrowseServicesWithEarlyCompletion(_ context.Context, servic
 
 		// Extract service names from PTR records that match our query
 		queryName := serviceType + ".local."
+		newServicesInThisResponse := 0
 		for _, answer := range response.Answers {
 			if answer.Header.Type == dnsmessage.TypePTR {
 				// Only process PTR records that are answering our specific query
@@ -134,17 +141,17 @@ func (c *MDNSClient) BrowseServicesWithEarlyCompletion(_ context.Context, servic
 							debugf("Found service: %s\n", serviceName)
 							services = append(services, serviceName)
 							serviceMap[serviceName] = true
-							
-							// Check if we've found the expected number of services
-							if expectedCount > 0 && len(services) >= expectedCount && !foundExpectedCount {
-								debugf("Found expected %d services, starting 500ms grace period\n", expectedCount)
-								foundExpectedCount = true
-								gracePeriodEnd = time.Now().Add(500 * time.Millisecond)
-							}
+							newServicesInThisResponse++
 						}
 					}
 				}
 			}
+		}
+
+		// Update last new service time if we found any new services in this response
+		if newServicesInThisResponse > 0 {
+			lastNewServiceTime = time.Now()
+			debugf("Found %d new services, updated silence timer\n", newServicesInThisResponse)
 		}
 	}
 
@@ -208,12 +215,12 @@ func (c *MDNSClient) LookupService(_ context.Context, serviceName, serviceType s
 
 	debugf("Sent lookup query for %s\n", fullName)
 
-	// Listen for responses
+	// Listen for responses with shorter per-service timeout
 	var service *MDNSService
-	deadline := time.Now().Add(c.timeout)
+	deadline := time.Now().Add(TimeoutConfig.MDNSLookupPerService)
 
 	for time.Now().Before(deadline) && service == nil {
-		if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		if err := conn.SetReadDeadline(time.Now().Add(TimeoutConfig.MDNSReadTimeout)); err != nil {
 			continue
 		}
 
@@ -331,16 +338,16 @@ func (c *MDNSClient) DiscoverHomebridgeServices(ctx context.Context) ([]MDNSServ
 func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, expectedNames []string) ([]MDNSService, error) {
 	debugf("Starting Homebridge service discovery with optimized timing\n")
 
-	// Phase 1: Browse for all _hap._tcp services (max 3 seconds, but complete early if possible)
-	browseCtx, browseCancel := context.WithTimeout(ctx, 3*time.Second)
+	// Phase 1: Browse for all _hap._tcp services (max configured time, but complete early if possible)
+	browseCtx, browseCancel := context.WithTimeout(ctx, TimeoutConfig.MDNSBrowseMax)
 	defer browseCancel()
-	
+
 	// Pass expected count to allow early completion
 	expectedServiceCount := len(expectedNames)
 	if expectedServiceCount == 0 {
 		expectedServiceCount = -1 // Unknown count, use full timeout
 	}
-	
+
 	serviceNames, err := c.BrowseServicesWithEarlyCompletion(browseCtx, "_hap._tcp", expectedServiceCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to browse services: %w", err)
@@ -358,14 +365,16 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 		servicesToLookup = serviceNames
 	}
 
-	// Phase 2: Parallel lookups (max 7 seconds, but complete as soon as all lookups finish)
-	lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 7*time.Second)
+	// Phase 2: Parallel lookups (max configured time, but complete as soon as all lookups finish)
+	lookupCtx, lookupCancel := context.WithTimeout(context.Background(), TimeoutConfig.MDNSLookupMax)
 	defer lookupCancel()
 
 	// Parallelize service lookups using goroutines
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var homebridgeServices []MDNSService
+
+	debugf("Starting parallel lookups for %d services: %v\n", len(servicesToLookup), servicesToLookup)
 
 	// Process services in parallel with reasonable concurrency limit
 	maxConcurrency := 10
@@ -386,25 +395,32 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 			go func(name string) {
 				defer wg.Done()
 
+				debugf("Starting lookup for service: %s\n", name)
+
 				// Acquire semaphore to limit concurrency
 				select {
 				case semaphore <- struct{}{}:
 					defer func() { <-semaphore }()
 				case <-lookupCtx.Done():
+					debugf("Context cancelled before acquiring semaphore for %s\n", name)
 					return // Context cancelled, exit early
 				}
 
 				// Check context before starting lookup
 				select {
 				case <-lookupCtx.Done():
+					debugf("Context cancelled before lookup for %s\n", name)
 					return
 				default:
 				}
 
 				service := c.lookupServiceWithRetries(lookupCtx, name, "_hap._tcp")
 				if service == nil {
+					debugf("Failed to lookup service details for %s\n", name)
 					return
 				}
+
+				debugf("Successfully looked up service %s at %s:%d with TXT records: %v\n", service.Name, service.Host, service.Port, service.TXTRecords)
 
 				// Check if this is a Homebridge service
 				if md, exists := service.TXTRecords["md"]; exists && strings.ToLower(md) == "homebridge" {
@@ -422,6 +438,7 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 
 		// Wait for all goroutines to complete
 		wg.Wait()
+		debugf("All lookup goroutines completed\n")
 	}()
 
 	// Wait for either completion or lookup timeout
@@ -429,7 +446,7 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 	case <-done:
 		debugf("Discovery completed, found %d Homebridge services\n", len(homebridgeServices))
 	case <-lookupCtx.Done():
-		debugf("Lookup phase timed out after 7s, found %d Homebridge services so far\n", len(homebridgeServices))
+		debugf("Lookup phase timed out after %v, found %d Homebridge services so far\n", TimeoutConfig.MDNSLookupMax, len(homebridgeServices))
 		return homebridgeServices, nil // Don't return error for lookup timeout
 	}
 
@@ -441,29 +458,34 @@ func (c *MDNSClient) lookupServiceWithRetries(ctx context.Context, serviceName, 
 	var service *MDNSService
 	var err error
 
+	debugf("Starting lookup with retries for %s.%s\n", serviceName, serviceType)
+
 	// Try lookup up to 3 times for reliability, but respect context timeout
 	for attempt := 1; attempt <= 3; attempt++ {
 		// Check if context is cancelled before each attempt
 		select {
 		case <-ctx.Done():
-			debugf("Context cancelled during lookup of %s\n", serviceName)
+			debugf("Context cancelled during lookup of %s (attempt %d)\n", serviceName, attempt)
 			return nil
 		default:
 		}
 
+		debugf("Lookup attempt %d/3 for %s\n", attempt, serviceName)
 		service, err = c.LookupService(ctx, serviceName, serviceType)
 		if err != nil {
 			debugf("Failed to lookup service %s (attempt %d): %v\n", serviceName, attempt, err)
 		} else if service != nil {
+			debugf("Successfully found service %s on attempt %d: %s:%d\n", serviceName, attempt, service.Host, service.Port)
 			return service // Success
 		} else {
-			debugf("No details found for service %s (attempt %d)\n", serviceName, attempt)
+			debugf("No details found for service %s (attempt %d) - service returned nil\n", serviceName, attempt)
 		}
 
 		// Short delay before retry, but respect context timeout
 		if attempt < 3 {
+			debugf("Waiting %v before retry %d for %s\n", TimeoutConfig.LookupRetryDelay, attempt+1, serviceName)
 			select {
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(TimeoutConfig.LookupRetryDelay):
 				// Continue to next attempt
 			case <-ctx.Done():
 				debugf("Context cancelled during retry delay for %s\n", serviceName)
@@ -472,14 +494,14 @@ func (c *MDNSClient) lookupServiceWithRetries(ctx context.Context, serviceName, 
 		}
 	}
 
-	debugf("Failed to lookup service %s after 3 attempts\n", serviceName)
+	debugf("Failed to lookup service %s after 3 attempts - giving up\n", serviceName)
 	return nil
 }
 
 // filterServicesByExpectedNames filters mDNS service names to only include those that might match expected child bridge names
 func filterServicesByExpectedNames(serviceNames []string, expectedNames []string) []string {
 	var filtered []string
-	
+
 	// Create a map for faster lookups and handle various name variations
 	expectedMap := make(map[string]bool)
 	for _, name := range expectedNames {
@@ -490,16 +512,16 @@ func filterServicesByExpectedNames(serviceNames []string, expectedNames []string
 		expectedMap[strings.ToLower(strings.ReplaceAll(name, "-", ""))] = true
 		expectedMap[strings.ToLower(strings.ReplaceAll(name, "_", ""))] = true
 	}
-	
+
 	for _, serviceName := range serviceNames {
 		serviceLower := strings.ToLower(serviceName)
-		
+
 		// Check exact match
 		if expectedMap[serviceLower] {
 			filtered = append(filtered, serviceName)
 			continue
 		}
-		
+
 		// Check if service name contains any expected name (partial match)
 		for _, expectedName := range expectedNames {
 			expectedLower := strings.ToLower(expectedName)
@@ -509,12 +531,12 @@ func filterServicesByExpectedNames(serviceNames []string, expectedNames []string
 			}
 		}
 	}
-	
+
 	// If no matches found, include all services as fallback
 	if len(filtered) == 0 {
 		debugf("No services matched expected names, including all services as fallback\n")
 		return serviceNames
 	}
-	
+
 	return filtered
 }
