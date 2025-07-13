@@ -18,6 +18,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 type AccessoryStatus struct {
@@ -34,6 +35,15 @@ type StatusMonitor struct {
 	lastStatus map[string]AccessoryStatus
 	client     *http.Client
 	token      string
+}
+
+type DiscoveryProgress struct {
+	Phase       string      // "browse", "lookup", "complete"
+	ServiceName string      // Name of service being processed
+	Service     *MDNSService // Completed service (nil if still processing)
+	Error       error       // Any error encountered
+	Current     int         // Current count
+	Total       int         // Total expected (if known)
 }
 
 var (
@@ -118,7 +128,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&host, "host", "H", defaultHost, "Homebridge UI host")
 	rootCmd.Flags().IntVarP(&port, "port", "p", defaultPort, "Homebridge UI port")
 	rootCmd.Flags().DurationVarP(&interval, "interval", "i", TimeoutConfig.DefaultPollingInterval, "Polling interval (duration format: 30s, 1m, etc.)")
-	rootCmd.Flags().IntVarP(&count, "count", "c", 0, "Number of checks to perform (0 = discovery-only, default = infinite)")
+	rootCmd.Flags().IntVarP(&count, "count", "c", -1, "Number of checks to perform (0 = discovery-only, default = infinite)")
 	rootCmd.Flags().StringVarP(&token, "token", "t", defaultToken, "Homebridge UI auth token")
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug output")
 	rootCmd.Flags().BoolP("child-bridges", "b", false, "Also monitor child bridges (deprecated)")
@@ -420,9 +430,14 @@ func runHAPMonitor(maxChecks int) {
 
 	// Handle discovery-only mode (count = 0)
 	if maxChecks == 0 {
-		fmt.Println("Discovery-only mode: performing child bridge discovery and exiting...")
-		checkAllBridgesOptimizedDiscoveryOnly(&cachedChildBridges, &cachedHAPServices)
+		performDiscovery(&cachedChildBridges, &cachedHAPServices)
 		return
+	}
+	
+	// Convert -1 (default) to 0 for infinite checks in the monitoring logic
+	infiniteMode := (maxChecks == -1)
+	if infiniteMode {
+		maxChecks = 0  // 0 means infinite in the existing logic
 	}
 
 	ticker := time.NewTicker(interval)
@@ -467,103 +482,31 @@ func checkAllBridgesOptimized(bridgeStatusMap map[string]map[string]interface{},
 }
 
 func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]interface{}, cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory, forceFullDiscovery bool, attempt int) {
-	fmt.Printf("\n[%s] Discovering child bridges (attempt %d/3)...\n", time.Now().Format("15:04:05"), attempt)
-
-	// Get known child bridges from API first
-	fmt.Printf("Getting child bridge list from HTTP API...")
-	currentChildBridges := getChildBridges()
+	currentChildBridges, hapServices := discoverBridges(cachedChildBridges, cachedHAPServices, forceFullDiscovery)
+	
 	if len(currentChildBridges) == 0 {
 		fmt.Println("No child bridges found in API.")
 		return
 	}
 
-	fmt.Printf("(found %d ✅)\n", len(currentChildBridges))
-	debugf("Found %d child bridges from API\n", len(currentChildBridges))
-
-	var hapServices []HAPAccessory
-	needsFullDiscovery := forceFullDiscovery
-
-	// Check if this is initial discovery or if child bridge list has changed
-	if !forceFullDiscovery && len(*cachedChildBridges) > 0 {
-		if !childBridgeListsEqual(*cachedChildBridges, currentChildBridges) {
-			debugf("Child bridge list changed, forcing full discovery\n")
-			needsFullDiscovery = true
+	// Check if we found fewer services than expected and retry if needed
+	if len(hapServices) < len(currentChildBridges) {
+		if attempt < 3 {
+			debugf("mDNS found only %d/%d expected bridges on attempt %d, retrying...\n", len(hapServices), len(currentChildBridges), attempt)
+			time.Sleep(TimeoutConfig.RetryDelay)
+			checkAllBridgesOptimizedWithRetry(bridgeStatusMap, cachedChildBridges, cachedHAPServices, true, attempt+1)
+			return
 		} else {
-			debugf("Child bridge list unchanged, checking cached services\n")
-			// Test cached services for reachability
-			unreachableServices := testCachedServicesReachability(*cachedHAPServices)
-			if len(unreachableServices) > 0 {
-				debugf("Found %d unreachable services, forcing full discovery\n", len(unreachableServices))
-				for _, service := range unreachableServices {
-					debugf("  - Unreachable: %s at %s:%d\n", service.Name, service.Host, service.Port)
-				}
-				needsFullDiscovery = true
-			} else {
-				debugf("All cached services reachable, using cached discovery\n")
-				hapServices = *cachedHAPServices
-			}
-		}
-	}
-
-	// Perform full mDNS discovery if needed
-	if needsFullDiscovery {
-		debugf("Performing full mDNS discovery\n")
-
-		fmt.Printf("Starting mDNS discovery for HAP services...")
-		// Discover HAP services via mDNS with configured timeout (browse + lookup phases)
-		// Pass child bridge names for optimized filtering
-		var expectedNames []string
-		for _, bridge := range currentChildBridges {
-			expectedNames = append(expectedNames, bridge.Name)
-		}
-		allHAPServices := discoverHAPServicesWithTimeoutAndFilter(TimeoutConfig.MDNSTotal, expectedNames)
-		debugf("mDNS discovered %d total HAP services\n", len(allHAPServices))
-
-		// Filter HAP services to only include known child bridges
-		hapServices = nil
-		for _, hapService := range allHAPServices {
-			if isKnownChildBridge(hapService, currentChildBridges) {
-				hapServices = append(hapServices, hapService)
-			} else {
-				debugf("Skipping non-child-bridge HAP service: %s\n", hapService.Name)
-			}
-		}
-
-		debugf("Found %d Homebridge HAP services from mDNS\n", len(hapServices))
-
-		// Validate that all child bridges from HTTP API are found via mDNS
-		if len(hapServices) < len(currentChildBridges) {
-			fmt.Printf("WARNING: mDNS found only %d/%d expected bridges on attempt %d\n", len(hapServices), len(currentChildBridges), attempt)
-			if attempt < 3 {
-				fmt.Printf("Retrying discovery...\n")
-				time.Sleep(TimeoutConfig.RetryDelay) // Brief delay before retry
-				checkAllBridgesOptimizedWithRetry(bridgeStatusMap, cachedChildBridges, cachedHAPServices, true, attempt+1)
-				return
-			}
 			fmt.Printf("ERROR: Failed to find all bridges after 3 attempts\n")
-			fmt.Printf("Expected bridges from API:\n")
-			for _, bridge := range currentChildBridges {
-				fmt.Printf("  - %s (%s)\n", bridge.Name, bridge.Plugin)
-			}
-			fmt.Printf("Found bridges via mDNS:\n")
-			for _, service := range hapServices {
-				fmt.Printf("  - %s\n", service.Name)
-			}
+			displayDiscoveryResults(currentChildBridges, hapServices)
 			fmt.Printf("Discovery incomplete - exiting. Check that all child bridges are running and advertising _hap._tcp services.\n")
 			os.Exit(1)
 		}
+	}
 
-		// Update cache
-		*cachedChildBridges = currentChildBridges
-		*cachedHAPServices = hapServices
-
-		if attempt == 1 {
-			fmt.Printf("mDNS discovery completed, looked up port data for all %d child bridges 🚀\n", len(hapServices))
-		} else {
-			fmt.Printf("mDNS discovery completed, looked up port data for all %d child bridges 🚀 (succeeded on attempt %d)\n", len(hapServices), attempt)
-		}
-	} else {
-		fmt.Printf("Using cached discovery for %d bridges\n", len(hapServices))
+	// Show discovery results on first attempt or when forced
+	if attempt == 1 || forceFullDiscovery {
+		displayDiscoveryResults(currentChildBridges, hapServices)
 	}
 
 	debugf("Total discovered child bridge services: %d\n", len(hapServices))
@@ -612,54 +555,93 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 	}
 }
 
-func checkAllBridgesOptimizedDiscoveryOnly(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory) {
-	fmt.Printf("\n[%s] Performing child bridge discovery...\n", time.Now().Format("15:04:05"))
+// performDiscovery performs bridge discovery and outputs results consistently
+func performDiscovery(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory) {
+	currentChildBridges, finalServices := discoverBridges(cachedChildBridges, cachedHAPServices, true)
+	displayDiscoveryResults(currentChildBridges, finalServices)
+}
 
+// discoverBridges performs the actual discovery logic, returns bridges and services
+func discoverBridges(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory, forceFullDiscovery bool) ([]ChildBridge, []HAPAccessory) {
 	// Get known child bridges from API first
-	fmt.Printf("Getting child bridge list from HTTP API...")
 	currentChildBridges := getChildBridges()
 	if len(currentChildBridges) == 0 {
-		fmt.Println("No child bridges found in API.")
-		return
+		debugf("No child bridges found in API\n")
+		return currentChildBridges, []HAPAccessory{}
 	}
-
-	fmt.Printf("(found %d ✅)\n", len(currentChildBridges))
 	debugf("Found %d child bridges from API\n", len(currentChildBridges))
 
-	fmt.Printf("Starting mDNS discovery for HAP services...")
-	// Discover HAP services via mDNS with configured timeout
-	var expectedNames []string
-	for _, bridge := range currentChildBridges {
-		expectedNames = append(expectedNames, bridge.Name)
-	}
-	allHAPServices := discoverHAPServicesWithTimeoutAndFilter(TimeoutConfig.MDNSTotal, expectedNames)
-	debugf("mDNS discovered %d total HAP services\n", len(allHAPServices))
+	var finalServices []HAPAccessory
+	needsFullDiscovery := forceFullDiscovery
 
-	// Filter HAP services to only include known child bridges
-	var hapServices []HAPAccessory
-	for _, hapService := range allHAPServices {
-		if isKnownChildBridge(hapService, currentChildBridges) {
-			hapServices = append(hapServices, hapService)
+	// Check if this is initial discovery or if child bridge list has changed
+	if !forceFullDiscovery && len(*cachedChildBridges) > 0 {
+		if !childBridgeListsEqual(*cachedChildBridges, currentChildBridges) {
+			debugf("Child bridge list changed, forcing full discovery\n")
+			needsFullDiscovery = true
 		} else {
-			debugf("Skipping non-child-bridge HAP service: %s\n", hapService.Name)
+			debugf("Child bridge list unchanged, checking cached services\n")
+			// Test cached services for reachability
+			unreachableServices := testCachedServicesReachability(*cachedHAPServices)
+			if len(unreachableServices) > 0 {
+				debugf("Found %d unreachable services, forcing full discovery\n", len(unreachableServices))
+				for _, service := range unreachableServices {
+					debugf("  - Unreachable: %s at %s:%d\n", service.Name, service.Host, service.Port)
+				}
+				needsFullDiscovery = true
+			} else {
+				debugf("All cached services reachable, using cached discovery\n")
+				finalServices = *cachedHAPServices
+			}
 		}
 	}
 
-	debugf("Found %d Homebridge HAP services from mDNS\n", len(hapServices))
+	// Perform full mDNS discovery if needed
+	if needsFullDiscovery {
+		debugf("Performing full mDNS discovery\n")
+
+		// Discover HAP services via mDNS
+		var expectedNames []string
+		for _, bridge := range currentChildBridges {
+			expectedNames = append(expectedNames, bridge.Name)
+		}
+
+		allHAPServices := discoverHAPServicesWithTimeoutAndFilter(TimeoutConfig.MDNSTotal, expectedNames)
+		
+		// Filter HAP services to only include known child bridges
+		for _, hapService := range allHAPServices {
+			if isKnownChildBridge(hapService, currentChildBridges) {
+				finalServices = append(finalServices, hapService)
+			} else {
+				debugf("Skipping non-child-bridge HAP service: %s\n", hapService.Name)
+			}
+		}
+	}
 
 	// Update cache
 	*cachedChildBridges = currentChildBridges
-	*cachedHAPServices = hapServices
+	*cachedHAPServices = finalServices
+	
+	return currentChildBridges, finalServices
+}
 
-	fmt.Printf("mDNS discovery completed, found all %d child bridges 🚀\n", len(hapServices))
-
-	// Display discovered bridges
-	fmt.Printf("\nDiscovered bridges:\n")
-	for _, service := range hapServices {
-		fmt.Printf("  - %s at %s:%d\n", service.Name, service.Host, service.Port)
+// displayDiscoveryResults shows the consistent discovery output
+func displayDiscoveryResults(bridges []ChildBridge, services []HAPAccessory) {
+	fmt.Println("\nDiscovered bridges:")
+	for _, bridge := range bridges {
+		// Find matching service
+		found := false
+		for _, service := range services {
+			if trimServiceName(service.Name) == bridge.Name {
+				fmt.Printf("  - %s at %s:%d\n", bridge.Name, service.Host, service.Port)
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Printf("  - %s (not found)\n", bridge.Name)
+		}
 	}
-
-	fmt.Printf("\nDiscovery complete. Found %d child bridges ready for monitoring.\n", len(hapServices))
 }
 
 func isKnownChildBridge(hapService HAPAccessory, _ []ChildBridge) bool {
@@ -1171,4 +1153,57 @@ func testCachedServicesReachability(cachedServices []HAPAccessory) []HAPAccessor
 	}
 
 	return unreachableServices
+}
+
+// trimServiceName removes trailing identifier from mDNS service name
+// e.g., "TplinkSmarthome 4160" becomes "TplinkSmarthome"
+func trimServiceName(serviceName string) string {
+	fields := strings.Fields(serviceName)
+	if len(fields) <= 1 {
+		return serviceName
+	}
+	return strings.Join(fields[:len(fields)-1], " ")
+}
+
+// updateLineInPlace updates a specific line using cursor positioning  
+func updateLineInPlace(lineNum, totalLines int, friendlyName, host string, port int) {
+	// Force cursor positioning - bypass terminal detection
+	// Calculate lines to move up (from bottom to target line)
+	linesToGoUp := totalLines - lineNum
+	
+	// Write ANSI escape sequences directly to stdout
+	os.Stdout.WriteString(fmt.Sprintf("\x1b[%dA", linesToGoUp)) // Move up
+	os.Stdout.WriteString("\r\x1b[K")                           // Clear line  
+	os.Stdout.WriteString(fmt.Sprintf("  - %s at %s:%d", friendlyName, host, port))
+	os.Stdout.WriteString(fmt.Sprintf("\x1b[%dB", linesToGoUp)) // Move down
+	os.Stdout.WriteString("\r")                                 // Return to start
+}
+
+// isTerminal checks if we're outputting to a terminal
+func isTerminal() bool {
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+
+// discoverHAPServicesWithProgress discovers HAP services and sends progress updates
+func discoverHAPServicesWithProgress(timeout time.Duration, expectedNames []string, progressChan chan<- DiscoveryProgress) []HAPAccessory {
+	client := NewMDNSClient(timeout)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// Discover services with progress updates
+	services := client.DiscoverHomebridgeServicesWithProgress(ctx, expectedNames, progressChan)
+	
+	// Convert to HAPAccessory format
+	var hapServices []HAPAccessory
+	for _, service := range services {
+		hapServices = append(hapServices, HAPAccessory{
+			Name: service.Name,
+			Host: service.Host,
+			Port: service.Port,
+		})
+	}
+
+	return hapServices
 }

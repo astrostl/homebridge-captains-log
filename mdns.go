@@ -359,7 +359,7 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 	var servicesToLookup []string
 	if expectedNames != nil && len(expectedNames) > 0 {
 		servicesToLookup = filterServicesByExpectedNames(serviceNames, expectedNames)
-		fmt.Printf("(filtered to %d ✅)\n", len(servicesToLookup))
+		debugf("Filtered to %d services for lookup\n", len(servicesToLookup))
 		debugf("Services to lookup: %v\n", servicesToLookup)
 	} else {
 		servicesToLookup = serviceNames
@@ -531,4 +531,93 @@ func filterServicesByExpectedNames(serviceNames []string, expectedNames []string
 	}
 
 	return filtered
+}
+
+// DiscoverHomebridgeServicesWithProgress discovers Homebridge HAP services with progress updates
+func (c *MDNSClient) DiscoverHomebridgeServicesWithProgress(ctx context.Context, expectedNames []string, progressChan chan<- DiscoveryProgress) []MDNSService {
+	debugf("Starting custom mDNS discovery for _hap._tcp services with progress updates (total timeout: %v)...\n", TimeoutConfig.MDNSTotal)
+
+	// Phase 1: Browse for services
+	browseCtx, browseCancel := context.WithTimeout(ctx, TimeoutConfig.MDNSBrowseMax)
+	defer browseCancel()
+
+	serviceNames, err := c.BrowseServicesWithEarlyCompletion(browseCtx, "_hap._tcp", len(expectedNames))
+	if err != nil {
+		debugf("Browse failed: %v\n", err)
+		return []MDNSService{}
+	}
+	debugf("Browse completed, found %d services\n", len(serviceNames))
+
+	// Filter services based on expected names
+	filteredNames := filterServicesByExpectedNames(serviceNames, expectedNames)
+	debugf("Services to lookup: %v\n", filteredNames)
+
+	// Phase 2: Parallel lookups with progress updates
+	lookupCtx, lookupCancel := context.WithTimeout(ctx, TimeoutConfig.MDNSLookupMax)
+	defer lookupCancel()
+
+	var wg sync.WaitGroup
+	serviceResults := make(chan *MDNSService, len(filteredNames))
+
+	debugf("Starting parallel lookups for %d services: %v\n", len(filteredNames), filteredNames)
+
+	for _, serviceName := range filteredNames {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			
+			// Send progress update for lookup start
+			select {
+			case progressChan <- DiscoveryProgress{
+				Phase: "lookup",
+				ServiceName: name,
+				Service: nil,
+				Current: 0,
+				Total: len(filteredNames),
+			}:
+			default:
+				// Don't block if channel is full
+			}
+
+			service := c.lookupServiceWithRetries(lookupCtx, name, "_hap._tcp")
+			if service != nil {
+				// Send progress update for completion
+				select {
+				case progressChan <- DiscoveryProgress{
+					Phase: "lookup",
+					ServiceName: name,
+					Service: service,
+					Current: 1,
+					Total: len(filteredNames),
+				}:
+				default:
+					// Don't block if channel is full
+				}
+			}
+			serviceResults <- service
+		}(serviceName)
+	}
+
+	// Wait for all lookups to complete
+	go func() {
+		wg.Wait()
+		close(serviceResults)
+	}()
+
+	// Collect results and filter for Homebridge services
+	var services []MDNSService
+	for service := range serviceResults {
+		if service != nil {
+			// Check if this is a Homebridge service
+			if mdValue, exists := service.TXTRecords["md"]; exists && mdValue == "homebridge" {
+				debugf("Found Homebridge service: %s at %s:%d\n", service.Name, service.Host, service.Port)
+				services = append(services, *service)
+			} else {
+				debugf("Skipping non-Homebridge service: %s (md=%s)\n", service.Name, mdValue)
+			}
+		}
+	}
+
+	debugf("Discovery completed, found %d Homebridge services\n", len(services))
+	return services
 }
