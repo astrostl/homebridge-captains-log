@@ -1,0 +1,2741 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "operationId": "AuthController_signIn",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Exchange a username and password for an authentication token.",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/settings": {
+      "get": {
+        "operationId": "AuthController_getSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Return settings required to load the UI before authentication.",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/noauth": {
+      "post": {
+        "operationId": "AuthController_getToken",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "This method can be used to obtain an access token ONLY when authentication has been disabled.",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/check": {
+      "get": {
+        "operationId": "AuthController_checkAuth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Check to see if an authentication token is still valid.",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/server/restart": {
+      "put": {
+        "operationId": "ServerController_restartServer",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Restart the Homebridge instance.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/restart/{deviceId}": {
+      "put": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_restartChildBridge",
+        "parameters": [
+          {
+            "name": "deviceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Restart a child bridge instance.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/stop/{deviceId}": {
+      "put": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_stopChildBridge",
+        "parameters": [
+          {
+            "name": "deviceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Stop a child bridge instance.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/start/{deviceId}": {
+      "put": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_startChildBridge",
+        "parameters": [
+          {
+            "name": "deviceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start a child bridge instance.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/pairing": {
+      "get": {
+        "operationId": "ServerController_getBridgePairingInformation",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the Homebridge <> HomeKit pairing information and status.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/reset-homebridge-accessory": {
+      "put": {
+        "operationId": "ServerController_resetHomebridgeAccessory",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reset the main Homebridge bridge, and change its username and pin. Also remove cached bridges and accessories.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/reset-cached-accessories": {
+      "put": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_deleteAllCachedAccessories",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove Homebridge cached accessories.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/cached-accessories": {
+      "get": {
+        "operationId": "ServerController_getCachedAccessories",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List cached Homebridge accessories.",
+        "tags": [
+          "Homebridge"
+        ]
+      },
+      "delete": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_deleteCachedAccessories",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Array of accessories (uuid and cacheFile) to remove from the cache",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove multiple Homebridge cached accessories.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/cached-accessories/{uuid}": {
+      "delete": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_deleteCachedAccessory",
+        "parameters": [
+          {
+            "name": "uuid",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cacheFile",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove a single Homebridge cached accessory.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/pairings": {
+      "get": {
+        "operationId": "ServerController_getDevicePairings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List all paired accessories (main bridge, external cameras, TVs etc).",
+        "tags": [
+          "Homebridge"
+        ]
+      },
+      "delete": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_deleteDevicesPairings",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Array of paired bridges (id and resetPairingInfo) to remove from the cache",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove multiple paired bridges.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/pairings/{deviceId}": {
+      "get": {
+        "operationId": "ServerController_getDevicePairingById",
+        "parameters": [
+          {
+            "name": "deviceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get a single device pairing.",
+        "tags": [
+          "Homebridge"
+        ]
+      },
+      "delete": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_deleteDevicePairing",
+        "parameters": [
+          {
+            "name": "deviceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resetPairingInfo",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove a single paired bridge.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/pairings/{deviceId}/accessories": {
+      "delete": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_deleteDeviceAccessories",
+        "parameters": [
+          {
+            "name": "deviceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove a paired bridge's cached accessories.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/pairings/accessories": {
+      "delete": {
+        "description": "This method is only supported on setups running `hb-service`.",
+        "operationId": "ServerController_deleteDevicesAccessories",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Array of bridges (id) for which to remove accessories.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove multiple paired bridges's cached accessories.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/port/new": {
+      "get": {
+        "operationId": "ServerController_lookupUnusedPort",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return a random, unused port.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/network-interfaces/system": {
+      "get": {
+        "operationId": "ServerController_getSystemNetworkInterfaces",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return a list of available network interfaces on the server.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/network-interfaces/bridge": {
+      "get": {
+        "operationId": "ServerController_getHomebridgeNetworkInterfaces",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return a list of the network interface names assigned to Homebridge.",
+        "tags": [
+          "Homebridge"
+        ]
+      },
+      "put": {
+        "operationId": "ServerController_setHomebridgeNetworkInterfaces",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomebridgeNetworkInterfacesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set a list of the network interface names assigned to Homebridge.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/mdns-advertiser": {
+      "get": {
+        "operationId": "ServerController_getHomebridgeMdnsSetting",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the current mDNS advertiser settings.",
+        "tags": [
+          "Homebridge"
+        ]
+      },
+      "put": {
+        "operationId": "ServerController_setHomebridgeMdnsSetting",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomebridgeMdnsSettingDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set the mDNS advertiser settings.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/name": {
+      "put": {
+        "operationId": "ServerController_setHomebridgeName",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set the Homebridge name.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/port": {
+      "get": {
+        "operationId": "ServerController_getHomebridgePort",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the Homebridge port.",
+        "tags": [
+          "Homebridge"
+        ]
+      },
+      "put": {
+        "operationId": "ServerController_setHomebridgePort",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set the Homebridge port.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/ports": {
+      "get": {
+        "operationId": "ServerController_getUsablePort",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the usable ports as set in the config file.",
+        "tags": [
+          "Homebridge"
+        ]
+      },
+      "put": {
+        "operationId": "ServerController_setUsablePorts",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Object with start and end properties.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update the usable ports for Homebridge.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/server/wallpaper": {
+      "post": {
+        "operationId": "ServerController_uploadWallpaper",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upload an image file to the Homebridge storage directory and reference this as a wallpaper in the config file.",
+        "tags": [
+          "Homebridge"
+        ]
+      },
+      "delete": {
+        "operationId": "ServerController_deleteWallpaper",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete the current wallpaper file and remove the reference from the config file.",
+        "tags": [
+          "Homebridge"
+        ]
+      }
+    },
+    "/api/config-editor": {
+      "get": {
+        "operationId": "ConfigEditorController_getConfig",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the current Homebridge `config.json` file.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      },
+      "post": {
+        "operationId": "ConfigEditorController_updateConfig",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Homebridge config.json",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update the Homebridge `config.json` file.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      }
+    },
+    "/api/config-editor/plugin/{pluginName}": {
+      "get": {
+        "description": "An array of config blocks will be returned. An empty array will be returned if the plugin is not configured.",
+        "operationId": "ConfigEditorController_getConfigForPlugin",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the config blocks for a specific plugin.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      },
+      "post": {
+        "description": "An array of all config blocks for the plugin must be provided, missing blocks will be removed. Sending an empty array will remove all plugin config.",
+        "operationId": "ConfigEditorController_updateConfigForPlugin",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Array of plugin config blocks",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Replace the config for a specific plugin.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      }
+    },
+    "/api/config-editor/plugin/{pluginName}/disable": {
+      "put": {
+        "operationId": "ConfigEditorController_disablePlugin",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Mark a plugin as disabled.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      }
+    },
+    "/api/config-editor/plugin/{pluginName}/enable": {
+      "put": {
+        "operationId": "ConfigEditorController_enablePlugin",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Mark a plugin as enabled.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      }
+    },
+    "/api/config-editor/ui": {
+      "put": {
+        "operationId": "ConfigEditorController_setPropertyForUi",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update a config property for the Homebridge UI.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      }
+    },
+    "/api/config-editor/ui/accessory-control/instance-blacklist": {
+      "put": {
+        "operationId": "ConfigEditorController_setAccessoryControlInstanceBlacklist",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Array of bridge instances for which control by the UI should be blocked.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update the accessory control instance blacklist.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      }
+    },
+    "/api/config-editor/ui/plugins/hide-updates-for": {
+      "put": {
+        "operationId": "ConfigEditorController_setPluginsHideUpdatesFor",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Array of plugin names to hide updates for in the UI.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update the plugins hide updates for.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      }
+    },
+    "/api/config-editor/backups": {
+      "get": {
+        "operationId": "ConfigEditorController_listConfigBackups",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List the available Homebridge `config.json` backups.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      },
+      "delete": {
+        "operationId": "ConfigEditorController_deleteAllConfigBackups",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete all the Homebridge `config.json` backups.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      }
+    },
+    "/api/config-editor/backups/{backupId}": {
+      "get": {
+        "operationId": "ConfigEditorController_getBackup",
+        "parameters": [
+          {
+            "name": "backupId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the Homebridge `config.json` file for the given backup ID.",
+        "tags": [
+          "Homebridge Config Editor"
+        ]
+      }
+    },
+    "/api/plugins": {
+      "get": {
+        "operationId": "PluginsController_pluginsGet",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the list of currently installed Homebridge plugins.",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/plugins/search/{query}": {
+      "get": {
+        "operationId": "PluginsController_pluginsSearch",
+        "parameters": [
+          {
+            "name": "query",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Search the NPM registry for Homebridge plugins.",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/plugins/lookup/{pluginName}": {
+      "get": {
+        "operationId": "PluginsController_pluginLookup",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Lookup a single plugin from the NPM registry.",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/plugins/lookup/{pluginName}/versions": {
+      "get": {
+        "operationId": "PluginsController_getAvailablePluginVersions",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the available versions and tags for a single plugin from the NPM registry.",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/plugins/config-schema/{pluginName}": {
+      "get": {
+        "operationId": "PluginsController_getPluginConfigSchema",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the `config.schema.json` for a plugin.",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/plugins/changelog/{pluginName}": {
+      "get": {
+        "operationId": "PluginsController_getPluginChangeLog",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the `CHANGELOG.md` (post install) for a plugin.",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/plugins/release/{pluginName}": {
+      "get": {
+        "operationId": "PluginsController_getPluginRelease",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the latest GitHub release notes and latest changelog for a plugin.",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/plugins/alias/{pluginName}": {
+      "get": {
+        "description": "NOTE: `pluginAlias` and `pluginType` will be `null` if the type or alias could not be resolved.",
+        "operationId": "PluginsController_getPluginAlias",
+        "parameters": [
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Attempt to resolve the type (platform or accessory) and alias for a plugin.",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/accessories": {
+      "get": {
+        "description": "Homebridge must be running in `insecure` mode to access the accessory list.",
+        "operationId": "AccessoriesController_getAccessories",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return a list of Homebridge accessories.",
+        "tags": [
+          "Accessories"
+        ]
+      }
+    },
+    "/api/accessories/layout": {
+      "get": {
+        "operationId": "AccessoriesController_getAccessoryLayout",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the accessory and room layout for the authenticating user.",
+        "tags": [
+          "Accessories"
+        ]
+      }
+    },
+    "/api/accessories/{uniqueId}": {
+      "get": {
+        "description": "Get the `uniqueId` from `GET /api/accessories`.",
+        "operationId": "AccessoriesController_getAccessory",
+        "parameters": [
+          {
+            "name": "uniqueId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get a single accessory and refresh its characteristics.",
+        "tags": [
+          "Accessories"
+        ]
+      },
+      "put": {
+        "description": "Get the `uniqueId` and `characteristicType` values from `GET /api/accessories`.",
+        "operationId": "AccessoriesController_setAccessoryCharacteristic",
+        "parameters": [
+          {
+            "name": "uniqueId",
+            "required": true,
+            "in": "path",
+            "schema": {}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccessorySetCharacteristicDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set the value of an accessory characteristic.",
+        "tags": [
+          "Accessories"
+        ]
+      }
+    },
+    "/api/plugins/custom-plugins/homebridge-deconz/dump-file": {
+      "get": {
+        "operationId": "HomebridgeDeconzController_exchangeCredentials",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/plugins/custom-plugins/homebridge-hue/dump-file": {
+      "get": {
+        "operationId": "HomebridgeHueController_exchangeCredentials",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/plugins/settings-ui/{pluginName}/*": {
+      "get": {
+        "operationId": "PluginsSettingsUiController_serveCustomUiAsset",
+        "parameters": [
+          {
+            "name": "origin",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "v",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pluginName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Returns the HTML assets for a plugin's custom UI",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/api/users": {
+      "get": {
+        "operationId": "UsersController_getUsers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get a list of existing users.",
+        "tags": [
+          "User Management"
+        ]
+      },
+      "post": {
+        "operationId": "UsersController_addUser",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a new user.",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/users/{userId}": {
+      "patch": {
+        "operationId": "UsersController_updateUser",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update a user.",
+        "tags": [
+          "User Management"
+        ]
+      },
+      "delete": {
+        "operationId": "UsersController_deleteUser",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a user.",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/users/change-password": {
+      "post": {
+        "operationId": "UsersController_updateOwnPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdatePasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update the password for the current user.",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/users/otp/setup": {
+      "post": {
+        "operationId": "UsersController_setupOtp",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start 2FA setup for the current user.",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/users/otp/activate": {
+      "post": {
+        "operationId": "UsersController_activateOtp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserActivateOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Activate 2FA setup for the current user.",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/users/otp/deactivate": {
+      "post": {
+        "operationId": "UsersController_deactivateOtp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserDeactivateOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deactivate 2FA setup for the current user.",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/status/cpu": {
+      "get": {
+        "operationId": "StatusController_getServerCpuInfo",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the current CPU load, load history and temperature (if available).",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/status/ram": {
+      "get": {
+        "operationId": "StatusController_getServerMemoryInfo",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return total memory, memory usage, and memory usage history in bytes.",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/status/network": {
+      "get": {
+        "operationId": "StatusController_getServerNetworkInfo",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Returns the current transmitted and received bytes per second.",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/status/uptime": {
+      "get": {
+        "operationId": "StatusController_getServerUptimeInfo",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the host and process (UI) uptime.",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/status/homebridge": {
+      "get": {
+        "description": "Possible Homebridge statuses are `up`, `pending` or `down`.",
+        "operationId": "StatusController_checkHomebridgeStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the current Homebridge status.",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/status/homebridge/child-bridges": {
+      "get": {
+        "description": "This method is only available when running `hb-service`.",
+        "operationId": "StatusController_getChildBridges",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return an array of the active child bridges and their status.",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/status/homebridge-version": {
+      "get": {
+        "operationId": "StatusController_getHomebridgeVersion",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the current Homebridge version and package information.",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/status/server-information": {
+      "get": {
+        "operationId": "StatusController_getHomebridgeServerInfo",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return general information about the host environment.",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/status/nodejs": {
+      "get": {
+        "operationId": "StatusController_getNodeJsVersionInfo",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return current Node.js version and update availability information.",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/status/rpi/throttled": {
+      "get": {
+        "operationId": "StatusController_getRaspberryPiThrottledStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Returns throttled status for Raspberry Pi.",
+        "tags": [
+          "Server Status"
+        ]
+      }
+    },
+    "/api/platform-tools/linux/restart-host": {
+      "put": {
+        "operationId": "LinuxController_restartHost",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Restart the host server.",
+        "tags": [
+          "Platform - Linux"
+        ]
+      }
+    },
+    "/api/platform-tools/linux/shutdown-host": {
+      "put": {
+        "operationId": "LinuxController_shutdownHost",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Shutdown the host server.",
+        "tags": [
+          "Platform - Linux"
+        ]
+      }
+    },
+    "/api/platform-tools/docker/startup-script": {
+      "get": {
+        "operationId": "DockerController_getStartupScript",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the `homebridge/homebridge` docker image `startup.sh` file contents.",
+        "tags": [
+          "Platform - Docker"
+        ]
+      },
+      "put": {
+        "operationId": "DockerController_updateStartupScript",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update the `homebridge/homebridge` docker image `startup.sh` file contents.",
+        "tags": [
+          "Platform - Docker"
+        ]
+      }
+    },
+    "/api/platform-tools/docker/restart-container": {
+      "put": {
+        "operationId": "DockerController_restartDockerContainer",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Restart the `homebridge/homebridge` docker image container.",
+        "tags": [
+          "Platform - Docker"
+        ]
+      }
+    },
+    "/api/platform-tools/hb-service/homebridge-startup-settings": {
+      "get": {
+        "operationId": "HbServiceController_getHomebridgeStartupSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the startup flags and env variables for Homebridge.",
+        "tags": [
+          "Platform - HB Service"
+        ]
+      },
+      "put": {
+        "operationId": "HbServiceController_setHomebridgeStartupSettings",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HbServiceStartupSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update the startup flags and env variables for Homebridge.",
+        "tags": [
+          "Platform - HB Service"
+        ]
+      }
+    },
+    "/api/platform-tools/hb-service/set-full-service-restart-flag": {
+      "put": {
+        "description": "When running under hb-service the UI will only restart if it detects it needs to.",
+        "operationId": "HbServiceController_setFullServiceRestartFlag",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Request the UI does a full restart next time a restart for Homebridge is sent.",
+        "tags": [
+          "Platform - HB Service"
+        ]
+      }
+    },
+    "/api/platform-tools/hb-service/log/download": {
+      "get": {
+        "operationId": "HbServiceController_downloadLogFile",
+        "parameters": [
+          {
+            "name": "colour",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "yes",
+                "no"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Download the entire log file.",
+        "tags": [
+          "Platform - HB Service"
+        ]
+      }
+    },
+    "/api/platform-tools/hb-service/log/truncate": {
+      "put": {
+        "operationId": "HbServiceController_truncateLogFile",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Truncate/empty the log file.",
+        "tags": [
+          "Platform - HB Service"
+        ]
+      }
+    },
+    "/api/backup": {
+      "post": {
+        "operationId": "BackupController_createBackupInDirectory",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a backup file and save it in the backup directory.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/backup/download": {
+      "get": {
+        "operationId": "BackupController_downloadBackup",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Download a `.tar.gz` of the Homebridge instance.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/backup/scheduled-backups/next": {
+      "get": {
+        "operationId": "BackupController_getNextBackupTime",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Return the date and time of the next scheduled backup.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/backup/scheduled-backups": {
+      "get": {
+        "operationId": "BackupController_listScheduledBackups",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List available system generated instance backups.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/backup/scheduled-backups/{backupId}": {
+      "get": {
+        "operationId": "BackupController_getScheduledBackup",
+        "parameters": [
+          {
+            "name": "backupId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Download a system generated instance backup.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      },
+      "delete": {
+        "operationId": "BackupController_deleteScheduledBackup",
+        "parameters": [
+          {
+            "name": "backupId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a system generated instance backup.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/backup/scheduled-backups/{backupId}/restore": {
+      "post": {
+        "description": "NOTE: This endpoint does not trigger the restore process.",
+        "operationId": "BackupController_restoreScheduledBackup",
+        "parameters": [
+          {
+            "name": "backupId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Extract a system generated instance backup into the restore directory.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/backup/restore": {
+      "post": {
+        "description": "NOTE: This endpoint does not trigger the restore process.",
+        "operationId": "BackupController_restoreBackup",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upload a `.tar.gz` of the Homebridge instance.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/backup/restore/trigger": {
+      "put": {
+        "description": "Logs to `stdout`/`stderr`.",
+        "operationId": "BackupController_restoreBackupTrigger",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Triggers a headless restore process from the last uploaded backup file.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/backup/restore/hbfx": {
+      "post": {
+        "description": "NOTE: This endpoint does not trigger the restore process.",
+        "operationId": "BackupController_restoreHbfx",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upload a `.hbfx` backup file created by third party apps.",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/backup/restart": {
+      "put": {
+        "operationId": "BackupController_postBackupRestoreRestart",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Trigger a hard restart of Homebridge (use after restoring backup).",
+        "tags": [
+          "Backup & Restore"
+        ]
+      }
+    },
+    "/api/setup-wizard/create-first-user": {
+      "post": {
+        "description": "This endpoint is not available after the Homebridge setup wizard is complete.",
+        "operationId": "SetupWizardController_setupFirstUser",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create the first user.",
+        "tags": [
+          "Setup Wizard"
+        ]
+      }
+    },
+    "/api/setup-wizard/get-setup-wizard-token": {
+      "get": {
+        "description": "This endpoint is not available after the Homebridge setup wizard is complete.",
+        "operationId": "SetupWizardController_generateSetupWizardToken",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Creates a auth token to be used by the setup wizard.",
+        "tags": [
+          "Setup Wizard"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Homebridge UI API Reference",
+    "description": "",
+    "version": "4.80.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "oauth2",
+        "flows": {
+          "password": {
+            "tokenUrl": "/api/auth/login",
+            "scopes": null
+          }
+        }
+      }
+    },
+    "schemas": {
+      "AuthDto": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "otp": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ]
+      },
+      "HomebridgeNetworkInterfacesDto": {
+        "type": "object",
+        "properties": {
+          "adapters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "adapters"
+        ]
+      },
+      "HomebridgeMdnsSettingDto": {
+        "type": "object",
+        "properties": {
+          "advertiser": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "advertiser"
+        ]
+      },
+      "AccessorySetCharacteristicDto": {
+        "type": "object",
+        "properties": {
+          "characteristicType": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "title": "Accepts a string, boolean, or integer value."
+          }
+        },
+        "required": [
+          "characteristicType",
+          "value"
+        ]
+      },
+      "UserDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number",
+            "readOnly": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "admin": {
+            "type": "boolean"
+          },
+          "password": {
+            "type": "string",
+            "writeOnly": true
+          },
+          "otpActive": {
+            "type": "boolean",
+            "readOnly": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "username",
+          "admin",
+          "password",
+          "otpActive"
+        ]
+      },
+      "UserUpdatePasswordDto": {
+        "type": "object",
+        "properties": {
+          "currentPassword": {
+            "type": "string"
+          },
+          "newPassword": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "currentPassword",
+          "newPassword"
+        ]
+      },
+      "UserActivateOtpDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "UserDeactivateOtpDto": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ]
+      },
+      "HbServiceStartupSettings": {
+        "type": "object",
+        "properties": {
+          "HOMEBRIDGE_DEBUG": {
+            "type": "boolean",
+            "default": false
+          },
+          "HOMEBRIDGE_KEEP_ORPHANS": {
+            "type": "boolean",
+            "default": false
+          },
+          "HOMEBRIDGE_INSECURE": {
+            "type": "boolean",
+            "default": true
+          },
+          "ENV_DEBUG": {
+            "type": "string"
+          },
+          "ENV_NODE_OPTIONS": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "HOMEBRIDGE_DEBUG",
+          "HOMEBRIDGE_KEEP_ORPHANS",
+          "HOMEBRIDGE_INSECURE"
+        ]
+      }
+    }
+  }
+}

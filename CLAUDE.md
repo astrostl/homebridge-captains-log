@@ -14,11 +14,84 @@ The `.env` file is gitignored to prevent committing local configuration.
 ## API Documentation
 
 Homebridge UI has Swagger documentation available at `/swagger` endpoint.
-Local copy stored in `homebridge-api.json` (gitignored) for reference.
+Local copy stored in `homebridge-api.json` for reference.
 
 Source code: https://github.com/homebridge/homebridge-config-ui-x
 
+### Getting Auth Token for Debugging
+
+When debugging with curl, use `/api/auth/noauth` to get an authentication token:
+
+```bash
+# Get auth token (requires POST request, no authentication)
+curl -X POST http://192.168.50.242:8581/api/auth/noauth
+
+# Use token for authenticated requests
+curl -H "Authorization: Bearer YOUR_TOKEN_HERE" http://192.168.50.242:8581/api/status/homebridge/child-bridges
+```
+
 ## Build and Run
+
+### Tool Version Pinning
+
+The Makefile pins specific versions of all development tools for:
+- **Reproducible builds** - Everyone gets identical tool behavior regardless of install time
+- **Prevents breaking changes** - New tool versions can introduce stricter rules or different behavior
+- **CI/CD consistency** - Build servers use same tool versions as local development  
+- **Debugging** - Know exactly which tool version was used when issues arise
+- **Controlled upgrades** - Test new tool versions before rolling out to entire team
+
+#### Updating Tool Versions
+
+To check for and update tool versions, use Go commands instead of web searches:
+
+```bash
+# Check available versions for specific tools
+go list -m -versions github.com/mgechev/revive
+go list -m -versions github.com/fzipp/gocyclo
+go list -m -versions github.com/gordonklaus/ineffassign
+go list -m -versions github.com/golangci/misspell
+go list -m -versions github.com/securego/gosec/v2
+go list -m -versions golang.org/x/tools/cmd/goimports
+go list -m -versions honnef.co/go/tools/cmd/staticcheck
+go list -m -versions golang.org/x/vuln/cmd/govulncheck
+go list -m -versions golang.org/x/tools/cmd/deadcode
+
+# Check latest version directly
+go install github.com/mgechev/revive@latest  # Test latest before updating Makefile
+```
+
+Update the version variables in the Makefile after testing, then run `make deps` to install updated tools.
+
+### Using Makefile (Recommended)
+
+```bash
+make all          # Full build pipeline (quality + test + build)
+make build        # Build only
+make quality      # Comprehensive quality checks (fmt, fmts, vet, verify, vulncheck, lint, cyclo, imports, staticcheck, gosec, ineffassign, misspell, deadcode)
+make check        # Basic quality checks (fmt, vet, test)
+make test         # Run tests
+make fmt          # Format code
+make fmts         # Simplify code formatting
+make vet          # Static analysis
+make mod          # Tidy dependencies
+make verify       # Verify module dependencies
+make vulncheck    # Check for known vulnerabilities
+make lint         # Run revive linter
+make cyclo        # Check cyclomatic complexity (threshold 15)
+make imports      # Check import formatting
+make staticcheck  # Enhanced static analysis
+make gosec        # Security vulnerability scanner
+make ineffassign  # Detect ineffectual assignments
+make misspell     # Check for common spelling errors
+make deadcode     # Detect unused (dead) code
+make clean        # Remove build artifacts
+make install      # Install to GOPATH/bin
+make deps         # Install all development tools
+make help         # Show all available targets
+```
+
+### Manual Build
 
 ```bash
 go build -o hb-clog

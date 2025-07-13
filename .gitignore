@@ -1,9 +1,7 @@
 # Environment variables
 .env
 
-# API documentation  
-homebridge-api.json
-# Keep api.md - it's our documentation
+# Keep API.md and homebridge-api.json - they're useful documentation
 
 # Go binaries
 hb-clog
@@ -24,3 +22,25 @@ hb-clog.exe
 
 # Dependency directories
 vendor/
+
+# SAST analysis artifacts
+.codeql-db/
+codeql-results.sarif
+
+# Claude Code settings (development-specific)
+.claude/
+
+# Editor temporary files
+*.swp
+*.swo
+*~
+
+# macOS system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Go coverage files
+coverage.out

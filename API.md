@@ -8,9 +8,8 @@ HAP is the protocol used by HomeKit accessories to communicate. Child bridges ex
 
 ### Finding Child Bridges
 Child bridges can be discovered via:
-1. **Main Homebridge API**: `GET /api/status/homebridge/child-bridges` returns list with ports
-2. **mDNS/Bonjour**: Look for `_hap._tcp` services on network
-3. **Known ports**: Child bridges typically run on ports like 51250, 51251, etc.
+1. **Main Homebridge API**: `GET /api/status/homebridge/child-bridges` returns metadata (no ports)
+2. **mDNS/Bonjour**: Look for `_hap._tcp` services with `md=homebridge` TXT records to get ports
 
 Example child bridge info from main API:
 ```json
@@ -86,7 +85,7 @@ Common characteristic type codes:
 
 ## Example Accessories Found
 
-### Office Fan (TplinkSmarthome bridge:51250)
+### Office Fan (TplinkSmarthome bridge)
 ```json
 {
   "aid": 6,
@@ -110,7 +109,7 @@ Common characteristic type codes:
 }
 ```
 
-### Casa Lights (TplinkSmarthome bridge:51250) 
+### Casa Lights (TplinkSmarthome bridge) 
 ```json
 {
   "aid": 3,

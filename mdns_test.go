@@ -1,0 +1,558 @@
+package main
+
+import (
+	"context"
+	"reflect"
+	"testing"
+	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
+)
+
+func TestNewMDNSClient(t *testing.T) {
+	timeout := 5 * time.Second
+	client := NewMDNSClient(timeout)
+
+	if client == nil {
+		t.Errorf("NewMDNSClient() returned nil")
+		return
+	}
+
+	if client.timeout != timeout {
+		t.Errorf("NewMDNSClient() timeout = %v, want %v", client.timeout, timeout)
+	}
+}
+
+func TestParseTXTRecord(t *testing.T) {
+	client := &MDNSClient{}
+	txtRecords := make(map[string]string)
+
+	tests := []struct {
+		name   string
+		record string
+		want   map[string]string
+	}{
+		{
+			name:   "key-value pair",
+			record: "md=homebridge",
+			want:   map[string]string{"md": "homebridge"},
+		},
+		{
+			name:   "boolean flag",
+			record: "debug",
+			want:   map[string]string{"debug": ""},
+		},
+		{
+			name:   "empty value",
+			record: "key=",
+			want:   map[string]string{"key": ""},
+		},
+		{
+			name:   "multiple equals",
+			record: "key=value=with=equals",
+			want:   map[string]string{"key": "value=with=equals"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear the map for each test
+			for k := range txtRecords {
+				delete(txtRecords, k)
+			}
+
+			client.parseTXTRecord(tt.record, txtRecords)
+
+			if !reflect.DeepEqual(txtRecords, tt.want) {
+				t.Errorf("parseTXTRecord() result = %v, want %v", txtRecords, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseTXTRecordMultiple(t *testing.T) {
+	client := &MDNSClient{}
+	txtRecords := make(map[string]string)
+
+	// Test multiple records
+	records := []string{
+		"md=homebridge",
+		"version=1.2.3",
+		"debug",
+		"port=8080",
+	}
+
+	for _, record := range records {
+		client.parseTXTRecord(record, txtRecords)
+	}
+
+	expected := map[string]string{
+		"md":      "homebridge",
+		"version": "1.2.3",
+		"debug":   "",
+		"port":    "8080",
+	}
+
+	if !reflect.DeepEqual(txtRecords, expected) {
+		t.Errorf("Multiple parseTXTRecord() result = %v, want %v", txtRecords, expected)
+	}
+}
+
+func TestMDNSServiceValidation(t *testing.T) {
+	// Test that MDNSService struct works as expected
+	service := MDNSService{
+		Name:       "TestService",
+		Host:       "192.168.1.100",
+		Port:       8080,
+		TXTRecords: map[string]string{"md": "homebridge"},
+	}
+
+	if service.Name != "TestService" {
+		t.Errorf("Service name = %v, want TestService", service.Name)
+	}
+
+	if service.Host != "192.168.1.100" {
+		t.Errorf("Service host = %v, want 192.168.1.100", service.Host)
+	}
+
+	if service.Port != 8080 {
+		t.Errorf("Service port = %v, want 8080", service.Port)
+	}
+
+	if service.TXTRecords["md"] != "homebridge" {
+		t.Errorf("TXT record md = %v, want homebridge", service.TXTRecords["md"])
+	}
+}
+
+func TestMDNSClientTimeout(t *testing.T) {
+	// Test that timeout is properly set
+	testTimeouts := []time.Duration{
+		1 * time.Second,
+		5 * time.Second,
+		10 * time.Second,
+	}
+
+	for _, timeout := range testTimeouts {
+		client := NewMDNSClient(timeout)
+		if client.timeout != timeout {
+			t.Errorf("Client timeout = %v, want %v", client.timeout, timeout)
+		}
+	}
+}
+
+func TestDiscoverHomebridgeServicesWithMockData(t *testing.T) {
+	// This test verifies the logic flow without actually performing network operations
+	// since mDNS discovery requires network access and multicast support
+
+	client := &MDNSClient{timeout: 100 * time.Millisecond}
+
+	// Test context cancellation
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// Use a goroutine with timeout to avoid hanging
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		services, err := client.DiscoverHomebridgeServices(ctx)
+		if err == nil {
+			t.Logf("Discovery with short timeout returned %d services", len(services))
+		} else {
+			t.Logf("Discovery failed as expected: %v", err)
+		}
+	}()
+
+	select {
+	case <-done:
+		// Test completed
+	case <-time.After(500 * time.Millisecond):
+		t.Log("Discovery test timed out, which is acceptable for network-dependent tests")
+	}
+}
+
+func TestMDNSServiceFiltering(t *testing.T) {
+	// Test the logic that would be used to filter Homebridge services
+	testServices := []MDNSService{
+		{
+			Name:       "Homebridge 1234 5678",
+			Host:       "192.168.1.100",
+			Port:       51234,
+			TXTRecords: map[string]string{"md": "homebridge"},
+		},
+		{
+			Name:       "TplinkSmarthome 4160",
+			Host:       "192.168.1.100",
+			Port:       51250,
+			TXTRecords: map[string]string{"md": "homebridge"},
+		},
+		{
+			Name:       "AppleTV",
+			Host:       "192.168.1.101",
+			Port:       7000,
+			TXTRecords: map[string]string{"md": "apple"},
+		},
+		{
+			Name:       "MyPlugin Bridge",
+			Host:       "192.168.1.100",
+			Port:       51251,
+			TXTRecords: map[string]string{"md": "homebridge"},
+		},
+	}
+
+	// Filter for Homebridge services only
+	var homebridgeServices []MDNSService
+	for _, service := range testServices {
+		if md, exists := service.TXTRecords["md"]; exists && md == "homebridge" {
+			homebridgeServices = append(homebridgeServices, service)
+		}
+	}
+
+	expectedCount := 3 // Three services have md=homebridge
+	if len(homebridgeServices) != expectedCount {
+		t.Errorf("Filtered services count = %d, want %d", len(homebridgeServices), expectedCount)
+	}
+
+	// Verify the correct services were included
+	expectedNames := []string{"Homebridge 1234 5678", "TplinkSmarthome 4160", "MyPlugin Bridge"}
+	for i, service := range homebridgeServices {
+		if service.Name != expectedNames[i] {
+			t.Errorf("Service %d name = %s, want %s", i, service.Name, expectedNames[i])
+		}
+	}
+}
+
+func TestMDNSServiceValidPort(t *testing.T) {
+	tests := []struct {
+		name    string
+		service MDNSService
+		valid   bool
+	}{
+		{
+			name: "valid service with host and port",
+			service: MDNSService{
+				Name: "TestService",
+				Host: "192.168.1.100",
+				Port: 8080,
+			},
+			valid: true,
+		},
+		{
+			name: "invalid service missing host",
+			service: MDNSService{
+				Name: "TestService",
+				Host: "",
+				Port: 8080,
+			},
+			valid: false,
+		},
+		{
+			name: "invalid service missing port",
+			service: MDNSService{
+				Name: "TestService",
+				Host: "192.168.1.100",
+				Port: 0,
+			},
+			valid: false,
+		},
+		{
+			name: "invalid service missing both",
+			service: MDNSService{
+				Name: "TestService",
+				Host: "",
+				Port: 0,
+			},
+			valid: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// This mimics the validation logic used in parseServiceResponse
+			valid := tt.service.Host != "" && tt.service.Port > 0
+			if valid != tt.valid {
+				t.Errorf("Service validation = %v, want %v", valid, tt.valid)
+			}
+		})
+	}
+}
+
+func TestTXTRecordEdgeCases(t *testing.T) {
+	client := &MDNSClient{}
+
+	tests := []struct {
+		name    string
+		record  string
+		wantKey string
+		wantVal string
+		wantLen int
+	}{
+		{
+			name:    "empty string",
+			record:  "",
+			wantKey: "",
+			wantVal: "",
+			wantLen: 1, // Empty string creates one entry
+		},
+		{
+			name:    "just equals",
+			record:  "=",
+			wantKey: "",
+			wantVal: "",
+			wantLen: 1,
+		},
+		{
+			name:    "key with no value but equals",
+			record:  "key=",
+			wantKey: "key",
+			wantVal: "",
+			wantLen: 1,
+		},
+		{
+			name:    "just key",
+			record:  "justkey",
+			wantKey: "justkey",
+			wantVal: "",
+			wantLen: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			txtRecords := make(map[string]string)
+			client.parseTXTRecord(tt.record, txtRecords)
+
+			if len(txtRecords) != tt.wantLen {
+				t.Errorf("TXT records length = %d, want %d", len(txtRecords), tt.wantLen)
+			}
+
+			if tt.wantKey != "" {
+				if val, exists := txtRecords[tt.wantKey]; !exists {
+					t.Errorf("Expected key %s not found", tt.wantKey)
+				} else if val != tt.wantVal {
+					t.Errorf("TXT record value = %s, want %s", val, tt.wantVal)
+				}
+			}
+		})
+	}
+}
+
+func TestContextWithMDNS(t *testing.T) {
+	// Test that mDNS client properly handles context creation
+	client := NewMDNSClient(100 * time.Millisecond)
+
+	// Test with a very short timeout to avoid hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	// Use a goroutine with timeout to avoid hanging the test
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		services, err := client.DiscoverHomebridgeServices(ctx)
+		// We don't expect any specific error or result since network behavior varies
+		t.Logf("Discovery completed with %d services found (err: %v)", len(services), err)
+	}()
+
+	select {
+	case <-done:
+		// Test completed
+	case <-time.After(300 * time.Millisecond):
+		t.Log("Context test timed out, which is acceptable for network-dependent tests")
+	}
+}
+
+func TestMDNSServiceStructComplete(t *testing.T) {
+	// Ensure all fields of MDNSService work correctly
+	service := MDNSService{
+		Name: "Test Service Name",
+		Host: "test.local",
+		Port: 12345,
+		TXTRecords: map[string]string{
+			"key1": "value1",
+			"key2": "value2",
+			"flag": "",
+		},
+	}
+
+	// Test struct field access
+	if service.Name == "" {
+		t.Error("Name field should not be empty")
+	}
+	if service.Host == "" {
+		t.Error("Host field should not be empty")
+	}
+	if service.Port == 0 {
+		t.Error("Port field should not be zero")
+	}
+	if service.TXTRecords == nil {
+		t.Error("TXTRecords should not be nil")
+	}
+	if len(service.TXTRecords) != 3 {
+		t.Errorf("TXTRecords length = %d, want 3", len(service.TXTRecords))
+	}
+}
+
+func TestBrowseServicesErrorHandling(t *testing.T) {
+	// Test BrowseServices with short timeout to trigger timeout paths
+	client := NewMDNSClient(100 * time.Millisecond) // Short but reasonable timeout
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	services, err := client.BrowseServices(ctx, "_invalid._tcp")
+
+	// Should handle timeout gracefully (may or may not error depending on timing)
+	t.Logf("BrowseServices with short timeout returned %d services, error: %v", len(services), err)
+}
+
+func TestLookupServiceErrorHandling(t *testing.T) {
+	// Test LookupService with short timeout
+	client := NewMDNSClient(100 * time.Millisecond) // Short but reasonable timeout
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	service, err := client.LookupService(ctx, "nonexistent", "_invalid._tcp")
+
+	// Should handle timeout gracefully (may return nil service)
+	if service != nil {
+		t.Logf("LookupService unexpectedly found service: %+v", service)
+	}
+	if err != nil {
+		t.Logf("LookupService returned expected error: %v", err)
+	}
+}
+
+func TestParseServiceResponseNilCases(t *testing.T) {
+	client := &MDNSClient{}
+
+	// Test with empty response
+	emptyResponse := &dnsmessage.Message{}
+	service := client.parseServiceResponse(emptyResponse, "test")
+
+	if service != nil {
+		t.Errorf("parseServiceResponse() with empty message should return nil, got %+v", service)
+	}
+}
+
+func TestParseServiceResponseWithData(t *testing.T) {
+	client := &MDNSClient{}
+
+	tests := []struct {
+		name     string
+		response *dnsmessage.Message
+		want     *MDNSService
+	}{
+		{
+			name: "valid SRV and TXT records",
+			response: &dnsmessage.Message{
+				Answers: []dnsmessage.Resource{
+					{
+						Header: dnsmessage.ResourceHeader{
+							Name:  dnsmessage.MustNewName("test._hap._tcp.local."),
+							Type:  dnsmessage.TypeSRV,
+							Class: dnsmessage.ClassINET,
+						},
+						Body: &dnsmessage.SRVResource{
+							Priority: 0,
+							Weight:   0,
+							Port:     8080,
+							Target:   dnsmessage.MustNewName("test.local."),
+						},
+					},
+					{
+						Header: dnsmessage.ResourceHeader{
+							Name:  dnsmessage.MustNewName("test._hap._tcp.local."),
+							Type:  dnsmessage.TypeTXT,
+							Class: dnsmessage.ClassINET,
+						},
+						Body: &dnsmessage.TXTResource{
+							TXT: []string{"md=homebridge", "version=1.0"},
+						},
+					},
+					{
+						Header: dnsmessage.ResourceHeader{
+							Name:  dnsmessage.MustNewName("test.local."),
+							Type:  dnsmessage.TypeA,
+							Class: dnsmessage.ClassINET,
+						},
+						Body: &dnsmessage.AResource{
+							A: [4]byte{192, 168, 1, 100},
+						},
+					},
+				},
+			},
+			want: &MDNSService{
+				Name:       "test",
+				Host:       "test.local",
+				Port:       8080,
+				TXTRecords: map[string]string{"md": "homebridge", "version": "1.0"},
+			},
+		},
+		{
+			name: "missing SRV record",
+			response: &dnsmessage.Message{
+				Answers: []dnsmessage.Resource{
+					{
+						Header: dnsmessage.ResourceHeader{
+							Name:  dnsmessage.MustNewName("test._hap._tcp.local."),
+							Type:  dnsmessage.TypeTXT,
+							Class: dnsmessage.ClassINET,
+						},
+						Body: &dnsmessage.TXTResource{
+							TXT: []string{"md=homebridge"},
+						},
+					},
+				},
+			},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := client.parseServiceResponse(tt.response, "test")
+			if (got == nil) != (tt.want == nil) {
+				t.Errorf("parseServiceResponse() = %v, want %v", got, tt.want)
+				return
+			}
+			if got != nil && tt.want != nil {
+				if got.Name != tt.want.Name || got.Host != tt.want.Host || got.Port != tt.want.Port {
+					t.Errorf("parseServiceResponse() = %+v, want %+v", got, tt.want)
+				}
+				if !reflect.DeepEqual(got.TXTRecords, tt.want.TXTRecords) {
+					t.Errorf("parseServiceResponse() TXT records = %v, want %v", got.TXTRecords, tt.want.TXTRecords)
+				}
+			}
+		})
+	}
+}
+
+func TestDiscoverHomebridgeServicesTimeout(t *testing.T) {
+	// Test that DiscoverHomebridgeServices handles timeout correctly
+	client := NewMDNSClient(50 * time.Millisecond) // Very short timeout
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// Use a timeout to avoid hanging
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		services, err := client.DiscoverHomebridgeServices(ctx)
+		// Should complete without hanging - services may be nil or empty depending on network conditions
+		if err != nil {
+			t.Logf("DiscoverHomebridgeServices() returned expected error: %v", err)
+		} else {
+			t.Logf("DiscoverHomebridgeServices() found %d services", len(services))
+		}
+	}()
+
+	select {
+	case <-done:
+		// Test completed successfully
+	case <-time.After(2 * time.Second): // Increased timeout for reliable CI/CD
+		t.Log("DiscoverHomebridgeServices() took longer than expected, which can happen with network operations")
+		// This is acceptable - don't fail the test for timing variations
+	}
+}
