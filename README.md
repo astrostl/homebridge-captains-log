@@ -130,9 +130,25 @@ For specific setups or when auto-discovery fails:
 ## Output Example
 
 ```
-2025-07-13 01:15:23 | Office Fan: On changed from false to true
-2025-07-13 01:15:45 | Casa Lights: On changed from true to false
-2025-07-13 01:16:02 | Kitchen Outlet: On changed from false to true
+Using cached bridge configuration (no changes detected)
+
+[16:54:06] Checking Pihole XXXX...
+No changes detected in 2 accessories.
+
+[16:54:06] Checking Harmony XXXX...
+No changes detected in 3 accessories.
+
+[16:54:06] Checking Airthings Device XXXX...
+No changes detected in 2 accessories.
+
+[16:54:06] Checking Hydrawise XXXX...
+No changes detected in 2 accessories.
+
+[16:54:06] Checking TplinkSmarthome XXXX...
+No changes detected in 6 accessories.
+
+[16:54:06] Checking PentairIntelliCenter XXXX...
+No changes detected in 18 accessories.
 ```
 
 ## Development
