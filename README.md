@@ -200,8 +200,6 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 
 ## Roadmap
 
-- ✅ **AWTRIX3 device detection** via mDNS - **COMPLETED in v0.3.0**
-- ✅ **ULANZI TC001 display output support** (via AWTRIX3 API) - **COMPLETED in v0.3.0** - LED matrix notification display for accessory state changes with rainbow text
 - **Bridge filtering** - Include/exclude specific child bridges from monitoring (e.g., `--bridge-include`, `--bridge-exclude`)
 - **Accessory filtering** - Monitor only specific accessories or exclude certain ones (e.g., `--accessory-include`, `--accessory-exclude`)
 - **Status filtering** - Filter by specific characteristic changes (e.g., `--status-include On,MotionDetected`, `--status-exclude BatteryLevel`)

@@ -6,6 +6,12 @@ A Go CLI tool to monitor Homebridge accessory status changes.
 
 **CRITICAL: README.md must always include a disclaimer at the top stating this software was "vibe coded" with Claude Code, use at your own risk, no warranty or guarantee provided.**
 
+**Roadmap Management:**
+- README.md roadmap should only show planned/future features
+- Completed features should be removed from roadmap once implemented
+- CHANGELOG.md is the source of truth for completed features and release history
+- Do not maintain "✅ COMPLETED" items in README roadmap - they belong in changelog
+
 ## Binary Naming Convention
 
 The tool has two binary names depending on installation method:
