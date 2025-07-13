@@ -95,12 +95,12 @@ make help         # Show all available targets
 
 ```bash
 go build -o hb-clog
-./hb-clog  # Default HAP mode, monitors all child bridges
-./hb-clog --http  # HTTP API mode for main bridge only
-./hb-clog -d  # Enable debug output 
-./hb-clog -i 5s  # Poll every 5 seconds
-./hb-clog -c 3  # Check 3 times then exit
-./hb-clog -c 0  # Discovery-only mode: discover bridges and exit
+./hb-clog         # Default: monitors all child bridges via HAP
+./hb-clog --main  # Monitor main bridge only (instead of child bridges)
+./hb-clog -d      # Enable debug output 
+./hb-clog -i 5s   # Poll every 5 seconds
+./hb-clog -c 3    # Check 3 times then exit
+./hb-clog -c 0    # Discovery-only mode: discover bridges and exit
 ```
 
 ## Debug Mode

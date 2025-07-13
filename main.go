@@ -104,7 +104,7 @@ var TimeoutConfig = struct {
 var rootCmd = &cobra.Command{
 	Use:   "captains-log",
 	Short: "Monitor Homebridge accessory status changes",
-	Long:  "A CLI tool to monitor Homebridge UI for accessory status changes and report any modifications.",
+	Long:  "A CLI tool to monitor Homebridge bridges and report accessory status changes.",
 	Run:   runMonitor,
 }
 
@@ -118,12 +118,12 @@ func init() {
 	rootCmd.Flags().StringVarP(&host, "host", "H", defaultHost, "Homebridge UI host")
 	rootCmd.Flags().IntVarP(&port, "port", "p", defaultPort, "Homebridge UI port")
 	rootCmd.Flags().DurationVarP(&interval, "interval", "i", TimeoutConfig.DefaultPollingInterval, "Polling interval (duration format: 30s, 1m, etc.)")
-	rootCmd.Flags().IntVarP(&count, "count", "c", 0, "Number of checks to perform (0 = infinite)")
+	rootCmd.Flags().IntVarP(&count, "count", "c", 0, "Number of checks to perform (0 = discovery-only, default = infinite)")
 	rootCmd.Flags().StringVarP(&token, "token", "t", defaultToken, "Homebridge UI auth token")
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug output")
-	rootCmd.Flags().BoolP("child-bridges", "b", false, "Also monitor child bridges")
-	rootCmd.Flags().BoolVarP(&useHAP, "hap", "a", true, "Use HAP (HomeKit) protocol to monitor all bridges")
-	rootCmd.Flags().BoolP("http", "x", false, "Use HTTP API mode instead of HAP")
+	rootCmd.Flags().BoolP("child-bridges", "b", false, "Also monitor child bridges (deprecated)")
+	rootCmd.Flags().BoolVarP(&useHAP, "hap", "a", true, "Use HAP (HomeKit) protocol to monitor child bridges (default)")
+	rootCmd.Flags().BoolP("main", "m", false, "Monitor main bridge only instead of child bridges")
 }
 
 func main() {
@@ -135,14 +135,14 @@ func main() {
 
 func runMonitor(cmd *cobra.Command, _ []string) {
 
-	// Check if HTTP mode was explicitly requested
-	httpMode, _ := cmd.Flags().GetBool("http")
-	if httpMode {
+	// Check if main bridge mode was explicitly requested
+	mainMode, _ := cmd.Flags().GetBool("main")
+	if mainMode {
 		useHAP = false
 	}
 
 	if !useHAP {
-		// HTTP API mode (legacy)
+		// Main bridge mode
 		baseURL := fmt.Sprintf("http://%s:%d", host, port)
 
 		monitor := &StatusMonitor{
@@ -153,11 +153,11 @@ func runMonitor(cmd *cobra.Command, _ []string) {
 			token:      token,
 		}
 
-		fmt.Printf("Starting Homebridge HTTP API monitor on %s (interval: %v)\n", baseURL, interval)
+		fmt.Printf("Starting Homebridge main bridge monitor on %s (interval: %v)\n", baseURL, interval)
 
 		monitor.run(count)
 	} else {
-		// HAP mode (default)
+		// Child bridges mode (default)
 		runHAPMonitor(count)
 	}
 }
@@ -179,15 +179,15 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 }
 
 func (m *StatusMonitor) run(maxChecks int) {
-	// Handle discovery-only mode (count = 0) for HTTP API
+	// Handle discovery-only mode (count = 0) for main bridge
 	if maxChecks == 0 {
-		fmt.Println("Discovery-only mode: performing HTTP API discovery and exiting...")
+		fmt.Println("Discovery-only mode: performing main bridge discovery and exiting...")
 		accessories, err := m.fetchAccessories()
 		if err != nil {
 			fmt.Printf("Error during discovery: %v\n", err)
 			return
 		}
-		fmt.Printf("HTTP API discovery complete. Found %d accessories from main bridge.\n", len(accessories))
+		fmt.Printf("Main bridge discovery complete. Found %d accessories from main bridge.\n", len(accessories))
 		for _, accessory := range accessories {
 			fmt.Printf("  - %s (%s)\n", accessory.ServiceName, accessory.Type)
 		}
@@ -420,7 +420,7 @@ func runHAPMonitor(maxChecks int) {
 
 	// Handle discovery-only mode (count = 0)
 	if maxChecks == 0 {
-		fmt.Println("Discovery-only mode: performing bridge discovery and exiting...")
+		fmt.Println("Discovery-only mode: performing child bridge discovery and exiting...")
 		checkAllBridgesOptimizedDiscoveryOnly(&cachedChildBridges, &cachedHAPServices)
 		return
 	}
@@ -613,7 +613,7 @@ func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]int
 }
 
 func checkAllBridgesOptimizedDiscoveryOnly(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory) {
-	fmt.Printf("\n[%s] Performing bridge discovery...\n", time.Now().Format("15:04:05"))
+	fmt.Printf("\n[%s] Performing child bridge discovery...\n", time.Now().Format("15:04:05"))
 
 	// Get known child bridges from API first
 	fmt.Printf("Getting child bridge list from HTTP API...")

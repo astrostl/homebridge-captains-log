@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom mDNS client implementation based on RFC 6762 specification
 - Discovers Homebridge child bridges via mDNS with md=homebridge filtering
 - Retry logic for reliable service discovery
-- Support for both HTTP API mode and HAP (HomeKit) protocol mode
+- Support for both main bridge mode and child bridges mode (HAP protocol)
 - Environment configuration via .env file with CLOG_ prefix
 - Comprehensive test suite with mDNS and main functionality tests
 - Complete Makefile with quality checks (fmt, vet, lint, security scan, etc.)

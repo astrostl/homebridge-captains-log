@@ -47,8 +47,8 @@ make build
 # Monitor all child bridges (HAP mode - recommended)
 ./hb-clog
 
-# Monitor main bridge only (HTTP API mode)
-./hb-clog --http
+# Monitor main bridge only 
+./hb-clog --main
 
 # Enable debug output
 ./hb-clog -d
@@ -146,7 +146,7 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 | `-i, --interval` | Polling interval (default: 30s) |
 | `-c, --count` | Number of checks before exit |
 | `-d, --debug` | Enable debug output |
-| `--http` | Use HTTP API mode instead of HAP |
+| `-m, --main` | Monitor main bridge only instead of child bridges |
 
 ## License
 
