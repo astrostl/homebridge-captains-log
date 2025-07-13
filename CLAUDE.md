@@ -32,6 +32,8 @@ AWTRIX3 LED matrix display API documentation stored in `ref/awtrix3-api.md` for 
 
 **Screen Capture**: Can retrieve current display state via `curl http://[IP]/api/screen` - returns 256-element array of RGB values for analysis
 
+**Text Positioning**: For precise vertical text positioning, use the `draw` array with `dt` command instead of `textOffset`. Format: `{"draw": [{"dt": [x, y, "text", "color"]}]}` where y=0-7 for the 8-pixel height display.
+
 Source: https://raw.githubusercontent.com/Blueforcer/awtrix3/main/docs/api.md
 
 ### Getting Auth Token for Debugging

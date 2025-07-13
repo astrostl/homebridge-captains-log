@@ -58,6 +58,9 @@ make build
 # Custom polling interval
 ./hb-clog -i 10s
 
+# Discovery-only mode (discover services and exit)
+./hb-clog -c 0
+
 # Run for specific number of checks then exit
 ./hb-clog -c 5
 
