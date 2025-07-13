@@ -339,12 +339,18 @@ func runHAPMonitor(maxChecks int) {
 
 	// Track status for each discovered bridge
 	bridgeStatusMap := make(map[string]map[string]interface{})
+	
+	// Cache for optimized discovery
+	var cachedChildBridges []ChildBridge
+	var cachedHAPServices []HAPAccessory
+	isInitialDiscovery := true
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Initial check
-	checkAllBridges(bridgeStatusMap)
+	checkAllBridgesOptimized(bridgeStatusMap, &cachedChildBridges, &cachedHAPServices, isInitialDiscovery)
+	isInitialDiscovery = false
 
 	if maxChecks == 1 {
 		return
@@ -361,7 +367,7 @@ func runHAPMonitor(maxChecks int) {
 	for {
 		select {
 		case <-ticker.C:
-			checkAllBridges(bridgeStatusMap)
+			checkAllBridgesOptimized(bridgeStatusMap, &cachedChildBridges, &cachedHAPServices, false)
 			checkCount++
 
 			if maxChecks > 0 && checkCount >= maxChecks {
@@ -376,48 +382,110 @@ func runHAPMonitor(maxChecks int) {
 	}
 }
 
-func checkAllBridges(bridgeStatusMap map[string]map[string]interface{}) {
-	fmt.Printf("\n[%s] Discovering child bridges...\n", time.Now().Format("15:04:05"))
+func checkAllBridgesOptimized(bridgeStatusMap map[string]map[string]interface{}, cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory, forceFullDiscovery bool) {
+	checkAllBridgesOptimizedWithRetry(bridgeStatusMap, cachedChildBridges, cachedHAPServices, forceFullDiscovery, 1)
+}
+
+func checkAllBridgesOptimizedWithRetry(bridgeStatusMap map[string]map[string]interface{}, cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory, forceFullDiscovery bool, attempt int) {
+	fmt.Printf("\n[%s] Discovering child bridges (attempt %d/3)...\n", time.Now().Format("15:04:05"), attempt)
 
 	// Get known child bridges from API first
-	childBridges := getChildBridges()
-	if len(childBridges) == 0 {
+	fmt.Printf("Getting child bridge list from HTTP API...\n")
+	currentChildBridges := getChildBridges()
+	if len(currentChildBridges) == 0 {
 		fmt.Println("No child bridges found in API.")
 		return
 	}
 
-	debugf("Found %d child bridges from API\n", len(childBridges))
+	fmt.Printf("Found %d child bridges from HTTP API\n", len(currentChildBridges))
+	debugf("Found %d child bridges from API\n", len(currentChildBridges))
 
-	// Discover HAP services via mDNS
-	allHAPServices := discoverHAPServices()
-	debugf("mDNS discovered %d total HAP services\n", len(allHAPServices))
-
-	// Filter HAP services to only include known child bridges
 	var hapServices []HAPAccessory
-	for _, hapService := range allHAPServices {
-		if isKnownChildBridge(hapService, childBridges) {
-			hapServices = append(hapServices, hapService)
+	needsFullDiscovery := forceFullDiscovery
+
+	// Check if this is initial discovery or if child bridge list has changed
+	if !forceFullDiscovery && len(*cachedChildBridges) > 0 {
+		if !childBridgeListsEqual(*cachedChildBridges, currentChildBridges) {
+			debugf("Child bridge list changed, forcing full discovery\n")
+			needsFullDiscovery = true
 		} else {
-			debugf("Skipping non-child-bridge HAP service: %s\n", hapService.Name)
+			debugf("Child bridge list unchanged, checking cached services\n")
+			// Test cached services for reachability
+			unreachableServices := testCachedServicesReachability(*cachedHAPServices)
+			if len(unreachableServices) > 0 {
+				debugf("Found %d unreachable services, forcing full discovery\n", len(unreachableServices))
+				for _, service := range unreachableServices {
+					debugf("  - Unreachable: %s at %s:%d\n", service.Name, service.Host, service.Port)
+				}
+				needsFullDiscovery = true
+			} else {
+				debugf("All cached services reachable, using cached discovery\n")
+				hapServices = *cachedHAPServices
+			}
 		}
 	}
 
-	debugf("Found %d Homebridge HAP services from mDNS\n", len(hapServices))
+	// Perform full mDNS discovery if needed
+	if needsFullDiscovery {
+		debugf("Performing full mDNS discovery\n")
+		
+		fmt.Printf("Starting mDNS discovery for HAP services...\n")
+		// Discover HAP services via mDNS with 10-second total timeout (3s browse + 7s lookups)
+		// Pass child bridge names for optimized filtering
+		var expectedNames []string
+		for _, bridge := range currentChildBridges {
+			expectedNames = append(expectedNames, bridge.Name)
+		}
+		allHAPServices := discoverHAPServicesWithTimeoutAndFilter(10*time.Second, expectedNames)
+		fmt.Printf("mDNS discovery completed, found %d total HAP services\n", len(allHAPServices))
+		debugf("mDNS discovered %d total HAP services\n", len(allHAPServices))
 
-	// Report mDNS discovery results
-	if len(hapServices) < len(childBridges) {
-		fmt.Printf("mDNS found %d/%d expected bridges\n", len(hapServices), len(childBridges))
-		if len(hapServices) == 0 {
-			fmt.Println("Note: No Homebridge child bridges discovered via mDNS")
-			fmt.Println("Check that child bridges are running and advertising _hap._tcp services")
+		// Filter HAP services to only include known child bridges
+		hapServices = nil
+		for _, hapService := range allHAPServices {
+			if isKnownChildBridge(hapService, currentChildBridges) {
+				hapServices = append(hapServices, hapService)
+			} else {
+				debugf("Skipping non-child-bridge HAP service: %s\n", hapService.Name)
+			}
+		}
+
+		debugf("Found %d Homebridge HAP services from mDNS\n", len(hapServices))
+
+		// Validate that all child bridges from HTTP API are found via mDNS
+		if len(hapServices) < len(currentChildBridges) {
+			fmt.Printf("WARNING: mDNS found only %d/%d expected bridges on attempt %d\n", len(hapServices), len(currentChildBridges), attempt)
+			if attempt < 3 {
+				fmt.Printf("Retrying discovery...\n")
+				time.Sleep(2 * time.Second) // Brief delay before retry
+				checkAllBridgesOptimizedWithRetry(bridgeStatusMap, cachedChildBridges, cachedHAPServices, true, attempt+1)
+				return
+			} else {
+				fmt.Printf("ERROR: Failed to find all bridges after 3 attempts\n")
+				fmt.Printf("Expected bridges from API:\n")
+				for _, bridge := range currentChildBridges {
+					fmt.Printf("  - %s (%s)\n", bridge.Name, bridge.Plugin)
+				}
+				fmt.Printf("Found bridges via mDNS:\n")
+				for _, service := range hapServices {
+					fmt.Printf("  - %s\n", service.Name)
+				}
+				fmt.Printf("Discovery incomplete - exiting. Check that all child bridges are running and advertising _hap._tcp services.\n")
+				os.Exit(1)
+			}
+		}
+
+		// Update cache
+		*cachedChildBridges = currentChildBridges
+		*cachedHAPServices = hapServices
+		
+		if attempt == 1 {
+			fmt.Printf("Found all %d expected bridges via mDNS\n", len(hapServices))
+		} else {
+			fmt.Printf("Found all %d expected bridges via mDNS (succeeded on attempt %d)\n", len(hapServices), attempt)
 		}
 	} else {
-		fmt.Printf("Found all %d expected bridges via mDNS\n", len(hapServices))
-	}
-
-	if len(hapServices) == 0 {
-		fmt.Println("No child bridge HAP services found via mDNS.")
-		return
+		fmt.Printf("Using cached discovery for %d bridges\n", len(hapServices))
 	}
 
 	debugf("Total discovered child bridge services: %d\n", len(hapServices))
@@ -468,14 +536,32 @@ func isKnownChildBridge(hapService HAPAccessory, _ []ChildBridge) bool {
 }
 
 func discoverHAPServices() []HAPAccessory {
-	debugf("Starting custom mDNS discovery for _hap._tcp services...\n")
+	// Use interval-based timeout for regular checks (10 seconds)
+	return discoverHAPServicesWithTimeout(10 * time.Second)
+}
 
-	// Create mDNS client with 10 second timeout to catch all responses
-	client := NewMDNSClient(10 * time.Second)
+func discoverHAPServicesWithTimeout(timeout time.Duration) []HAPAccessory {
+	return discoverHAPServicesWithTimeoutAndFilter(timeout, nil)
+}
 
-	// Discover all Homebridge services (filtered for md=homebridge)
+func discoverHAPServicesWithTimeoutAndFilter(timeout time.Duration, expectedNames []string) []HAPAccessory {
+	debugf("Starting custom mDNS discovery for _hap._tcp services (total timeout: %v)...\n", timeout)
+
+	// Create mDNS client - timeout is now handled internally with two phases
+	client := NewMDNSClient(timeout)
+
+	// Use background context since timeout is handled internally
 	ctx := context.Background()
-	mdnsServices, err := client.DiscoverHomebridgeServices(ctx)
+
+	// Discover Homebridge services with optional name filtering
+	// This will use 3s for browse + 7s for lookups internally
+	var mdnsServices []MDNSService
+	var err error
+	if expectedNames != nil {
+		mdnsServices, err = client.DiscoverHomebridgeServicesWithFilter(ctx, expectedNames)
+	} else {
+		mdnsServices, err = client.DiscoverHomebridgeServices(ctx)
+	}
 	if err != nil {
 		debugf("mDNS discovery failed: %v\n", err)
 		return nil
@@ -668,8 +754,21 @@ func checkHAPAccessory(client *http.Client, acc HAPAccessory, lastStatus map[str
 		return
 	}
 
+	debugf("Parsed %d accessories from HAP response for %s\n", len(hapResp.Accessories), acc.Name)
+	if len(hapResp.Accessories) <= 3 {
+		debugf("Full HAP response for %s: %s\n", acc.Name, string(body))
+	}
+
 	changesDetected := 0
 	accessoryCount := 0
+	var accessoryNames []string
+	
+	// Check if this bridge has been seen before by looking for a special marker
+	bridgeMarkerKey := fmt.Sprintf("_bridge_seen_%s", acc.Name)
+	initialDiscovery := lastStatus[bridgeMarkerKey] == nil
+	
+	// Mark that we've seen this bridge
+	lastStatus[bridgeMarkerKey] = true
 
 	// Process each accessory
 	for _, accessory := range hapResp.Accessories {
@@ -678,32 +777,39 @@ func checkHAPAccessory(client *http.Client, acc HAPAccessory, lastStatus map[str
 			continue // Skip if no name found
 		}
 		accessoryCount++
+		accessoryNames = append(accessoryNames, accessoryName)
 
-		// Check each service for characteristics we care about
+		// Check each service for ALL characteristics
 		for _, service := range accessory.Services {
 			for _, char := range service.Characteristics {
-				if char.Type == "25" { // On/Off characteristic
-					key := fmt.Sprintf("%d_%s", accessory.AID, accessoryName)
+				// Use a more stable key: bridge_name + AID + service_IID + char_IID + char_type
+				// This prevents issues when accessory names change or are unstable
+				key := fmt.Sprintf("%s_%d_%d_%d_%s", acc.Name, accessory.AID, service.IID, char.IID, char.Type)
 
-					if lastValue, exists := lastStatus[key]; exists {
-						if !reflect.DeepEqual(lastValue, char.Value) {
-							debugf("%s changed from %v (%T) to %v (%T)\n",
-								accessoryName, lastValue, lastValue, char.Value, char.Value)
-							reportHAPChange(accessoryName, char, lastValue, char.Value)
-							changesDetected++
-						}
-					} else {
-						debugf("First time seeing %s with value %v (%T)\n",
-							accessoryName, char.Value, char.Value)
+				if lastValue, exists := lastStatus[key]; exists {
+					if !reflect.DeepEqual(lastValue, char.Value) {
+						debugf("%s characteristic %s changed from %v (%T) to %v (%T)\n",
+							accessoryName, char.Description, lastValue, lastValue, char.Value, char.Value)
+						reportHAPChangeForCharacteristic(accessoryName, char, lastValue, char.Value)
+						changesDetected++
 					}
-
-					lastStatus[key] = char.Value
+				} else {
+					debugf("First time seeing %s characteristic %s (%s) with value %v (%T)\n",
+						accessoryName, char.Description, char.Type, char.Value, char.Value)
 				}
+
+				lastStatus[key] = char.Value
 			}
 		}
 	}
 
-	if changesDetected == 0 {
+	if initialDiscovery && accessoryCount > 0 {
+		if accessoryCount == 1 {
+			fmt.Printf("Found %d accessory: %s.\n", accessoryCount, accessoryNames[0])
+		} else {
+			fmt.Printf("Found %d accessories: %s.\n", accessoryCount, strings.Join(accessoryNames, ", "))
+		}
+	} else if changesDetected == 0 {
 		fmt.Printf("No changes detected in %d accessories.\n", accessoryCount)
 	} else {
 		fmt.Printf("Summary: %d changes detected\n", changesDetected)
@@ -738,6 +844,16 @@ func reportHAPChange(accessoryName string, char HAPCharacteristic, oldValue, new
 	}
 }
 
+func reportHAPChangeForCharacteristic(accessoryName string, char HAPCharacteristic, oldValue, newValue interface{}) {
+	// Use the description from the HAP response, fallback to characteristic type
+	description := char.Description
+	if description == "" {
+		description = fmt.Sprintf("characteristic %s", char.Type)
+	}
+	
+	fmt.Printf("\n[%s] %s %s: %v → %v\n", time.Now().Format("15:04:05"), accessoryName, description, oldValue, newValue)
+}
+
 func getFloatValue(val interface{}) float64 {
 	if f, ok := val.(float64); ok {
 		return f
@@ -749,4 +865,53 @@ func debugf(format string, args ...interface{}) {
 	if debug {
 		fmt.Printf("[DEBUG] "+format, args...)
 	}
+}
+
+// childBridgeListsEqual compares two child bridge lists to detect changes
+func childBridgeListsEqual(cached, current []ChildBridge) bool {
+	if len(cached) != len(current) {
+		return false
+	}
+
+	// Create maps for efficient comparison
+	cachedMap := make(map[string]ChildBridge)
+	for _, bridge := range cached {
+		cachedMap[bridge.Name] = bridge
+	}
+
+	for _, bridge := range current {
+		if cachedBridge, exists := cachedMap[bridge.Name]; !exists {
+			return false // New bridge
+		} else if cachedBridge.Status != bridge.Status || cachedBridge.Plugin != bridge.Plugin || cachedBridge.PID != bridge.PID {
+			return false // Bridge changed
+		}
+	}
+
+	return true
+}
+
+// testCachedServicesReachability tests if cached services are still reachable
+func testCachedServicesReachability(cachedServices []HAPAccessory) []HAPAccessory {
+	var unreachableServices []HAPAccessory
+	client := &http.Client{Timeout: 1 * time.Second} // Quick timeout for reachability test
+
+	for _, service := range cachedServices {
+		url := fmt.Sprintf("http://%s:%d/accessories", service.Host, service.Port)
+		resp, err := client.Get(url)
+		if err != nil {
+			debugf("Service unreachable: %s at %s:%d - %v\n", service.Name, service.Host, service.Port, err)
+			unreachableServices = append(unreachableServices, service)
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			debugf("Service returned error: %s at %s:%d - status %d\n", service.Name, service.Host, service.Port, resp.StatusCode)
+			unreachableServices = append(unreachableServices, service)
+		} else {
+			debugf("Service reachable: %s at %s:%d\n", service.Name, service.Host, service.Port)
+		}
+	}
+
+	return unreachableServices
 }
