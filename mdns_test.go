@@ -453,95 +453,115 @@ func TestParseServiceResponseNilCases(t *testing.T) {
 }
 
 func TestParseServiceResponseWithData(t *testing.T) {
-	client := &MDNSClient{}
+	t.Run("valid SRV and TXT records", testParseServiceResponseValid)
+	t.Run("missing SRV record", testParseServiceResponseMissingSRV)
+}
 
-	tests := []struct {
-		name     string
-		response *dnsmessage.Message
-		want     *MDNSService
-	}{
-		{
-			name: "valid SRV and TXT records",
-			response: &dnsmessage.Message{
-				Answers: []dnsmessage.Resource{
-					{
-						Header: dnsmessage.ResourceHeader{
-							Name:  dnsmessage.MustNewName("test._hap._tcp.local."),
-							Type:  dnsmessage.TypeSRV,
-							Class: dnsmessage.ClassINET,
-						},
-						Body: &dnsmessage.SRVResource{
-							Priority: 0,
-							Weight:   0,
-							Port:     testMDNSPortStandard,
-							Target:   dnsmessage.MustNewName("test.local."),
-						},
-					},
-					{
-						Header: dnsmessage.ResourceHeader{
-							Name:  dnsmessage.MustNewName("test._hap._tcp.local."),
-							Type:  dnsmessage.TypeTXT,
-							Class: dnsmessage.ClassINET,
-						},
-						Body: &dnsmessage.TXTResource{
-							TXT: []string{"md=homebridge", "version=1.0"},
-						},
-					},
-					{
-						Header: dnsmessage.ResourceHeader{
-							Name:  dnsmessage.MustNewName("test.local."),
-							Type:  dnsmessage.TypeA,
-							Class: dnsmessage.ClassINET,
-						},
-						Body: &dnsmessage.AResource{
-							A: [4]byte{testMDNSIPByte1, testMDNSIPByte2, testMDNSIPByte3, testMDNSIPByte4},
-						},
-					},
-				},
-			},
-			want: &MDNSService{
-				Name:       "test",
-				Host:       testMDNSHost,
-				Port:       testMDNSPortStandard,
-				TXTRecords: map[string]string{testMDNSTXTKeyMD: testMDNSTXTValueHomebr, "version": "1.0"},
-			},
-		},
-		{
-			name: "missing SRV record",
-			response: &dnsmessage.Message{
-				Answers: []dnsmessage.Resource{
-					{
-						Header: dnsmessage.ResourceHeader{
-							Name:  dnsmessage.MustNewName("test._hap._tcp.local."),
-							Type:  dnsmessage.TypeTXT,
-							Class: dnsmessage.ClassINET,
-						},
-						Body: &dnsmessage.TXTResource{
-							TXT: []string{testMDNSTXTKeyMD + "=" + testMDNSTXTValueHomebr},
-						},
-					},
-				},
-			},
-			want: nil,
-		},
+func testParseServiceResponseValid(t *testing.T) {
+	client := &MDNSClient{}
+	response := createValidServiceResponse()
+	want := &MDNSService{
+		Name:       "test",
+		Host:       testMDNSHost,
+		Port:       testMDNSPortStandard,
+		TXTRecords: map[string]string{testMDNSTXTKeyMD: testMDNSTXTValueHomebr, "version": "1.0"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := client.parseServiceResponse(tt.response, "test")
-			if (got == nil) != (tt.want == nil) {
-				t.Errorf("parseServiceResponse() = %v, want %v", got, tt.want)
-				return
-			}
-			if got != nil && tt.want != nil {
-				if got.Name != tt.want.Name || got.Host != tt.want.Host || got.Port != tt.want.Port {
-					t.Errorf("parseServiceResponse() = %+v, want %+v", got, tt.want)
-				}
-				if !reflect.DeepEqual(got.TXTRecords, tt.want.TXTRecords) {
-					t.Errorf("parseServiceResponse() TXT records = %v, want %v", got.TXTRecords, tt.want.TXTRecords)
-				}
-			}
-		})
+	got := client.parseServiceResponse(response, "test")
+	validateServiceResponse(t, got, want)
+}
+
+func testParseServiceResponseMissingSRV(t *testing.T) {
+	client := &MDNSClient{}
+	response := createMissingSRVResponse()
+
+	got := client.parseServiceResponse(response, "test")
+	if got != nil {
+		t.Errorf("parseServiceResponse() = %v, want nil", got)
+	}
+}
+
+func createValidServiceResponse() *dnsmessage.Message {
+	return &dnsmessage.Message{
+		Answers: []dnsmessage.Resource{
+			createServiceSRVRecord(),
+			createServiceTXTRecord(),
+			createServiceARecord(),
+		},
+	}
+}
+
+func createServiceSRVRecord() dnsmessage.Resource {
+	return dnsmessage.Resource{
+		Header: dnsmessage.ResourceHeader{
+			Name:  dnsmessage.MustNewName("test._hap._tcp.local."),
+			Type:  dnsmessage.TypeSRV,
+			Class: dnsmessage.ClassINET,
+		},
+		Body: &dnsmessage.SRVResource{
+			Priority: 0,
+			Weight:   0,
+			Port:     testMDNSPortStandard,
+			Target:   dnsmessage.MustNewName("test.local."),
+		},
+	}
+}
+
+func createServiceTXTRecord() dnsmessage.Resource {
+	return dnsmessage.Resource{
+		Header: dnsmessage.ResourceHeader{
+			Name:  dnsmessage.MustNewName("test._hap._tcp.local."),
+			Type:  dnsmessage.TypeTXT,
+			Class: dnsmessage.ClassINET,
+		},
+		Body: &dnsmessage.TXTResource{
+			TXT: []string{"md=homebridge", "version=1.0"},
+		},
+	}
+}
+
+func createServiceARecord() dnsmessage.Resource {
+	return dnsmessage.Resource{
+		Header: dnsmessage.ResourceHeader{
+			Name:  dnsmessage.MustNewName("test.local."),
+			Type:  dnsmessage.TypeA,
+			Class: dnsmessage.ClassINET,
+		},
+		Body: &dnsmessage.AResource{
+			A: [4]byte{testMDNSIPByte1, testMDNSIPByte2, testMDNSIPByte3, testMDNSIPByte4},
+		},
+	}
+}
+
+func createMissingSRVResponse() *dnsmessage.Message {
+	return &dnsmessage.Message{
+		Answers: []dnsmessage.Resource{
+			{
+				Header: dnsmessage.ResourceHeader{
+					Name:  dnsmessage.MustNewName("test._hap._tcp.local."),
+					Type:  dnsmessage.TypeTXT,
+					Class: dnsmessage.ClassINET,
+				},
+				Body: &dnsmessage.TXTResource{
+					TXT: []string{testMDNSTXTKeyMD + "=" + testMDNSTXTValueHomebr},
+				},
+			},
+		},
+	}
+}
+
+func validateServiceResponse(t *testing.T, got, want *MDNSService) {
+	if (got == nil) != (want == nil) {
+		t.Errorf("parseServiceResponse() = %v, want %v", got, want)
+		return
+	}
+	if got != nil && want != nil {
+		if got.Name != want.Name || got.Host != want.Host || got.Port != want.Port {
+			t.Errorf("parseServiceResponse() = %+v, want %+v", got, want)
+		}
+		if !reflect.DeepEqual(got.TXTRecords, want.TXTRecords) {
+			t.Errorf("parseServiceResponse() TXT records = %v, want %v", got.TXTRecords, want.TXTRecords)
+		}
 	}
 }
 

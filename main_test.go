@@ -30,6 +30,8 @@ const (
 	testBridgePort1  = 51234
 	testBridgePort2  = 51250
 	testBridgePort3  = 51251
+	testTimeout5s    = 5 * time.Second
+	testPortInvalid  = 9999
 )
 
 const (
@@ -317,107 +319,106 @@ func TestFormatChangeMessage(t *testing.T) {
 }
 
 func TestFetchAccessories(t *testing.T) {
-	// Test successful response
-	t.Run("successful fetch", func(t *testing.T) {
-		testAccessories := []AccessoryStatus{
-			{
-				UniqueID:    "test1",
-				ServiceName: testServiceName,
-				Type:        "light",
-				Values:      map[string]interface{}{testCharOn: true},
-			},
+	t.Run("successful fetch", testFetchAccessoriesSuccess)
+	t.Run("401 with successful noauth", testFetchAccessories401WithNoauth)
+	t.Run("server error", testFetchAccessoriesServerError)
+}
+
+func testFetchAccessoriesSuccess(t *testing.T) {
+	testAccessories := []AccessoryStatus{
+		{
+			UniqueID:    "test1",
+			ServiceName: testServiceName,
+			Type:        "light",
+			Values:      map[string]interface{}{testCharOn: true},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/accessories" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(testAccessories)
 		}
+	}))
+	defer server.Close()
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/accessories" {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(testAccessories)
-			}
-		}))
-		defer server.Close()
+	monitor := &StatusMonitor{
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: testTimeout5s},
+	}
 
-		monitor := &StatusMonitor{
-			baseURL: server.URL,
-			client:  &http.Client{Timeout: 5 * time.Second},
-		}
+	accessories, err := monitor.fetchAccessories()
+	if err != nil {
+		t.Errorf("fetchAccessories() error = %v", err)
+		return
+	}
 
-		accessories, err := monitor.fetchAccessories()
-		if err != nil {
-			t.Errorf("fetchAccessories() error = %v", err)
-			return
-		}
+	if len(accessories) != 1 {
+		t.Errorf("Expected 1 accessory, got %d", len(accessories))
+		return
+	}
 
-		if len(accessories) != 1 {
-			t.Errorf("Expected 1 accessory, got %d", len(accessories))
-			return
-		}
+	if accessories[0].UniqueID != "test1" {
+		t.Errorf("Expected UniqueID 'test1', got '%s'", accessories[0].UniqueID)
+	}
+}
 
-		if accessories[0].UniqueID != "test1" {
-			t.Errorf("Expected UniqueID 'test1', got '%s'", accessories[0].UniqueID)
-		}
-	})
-
-	// Test unauthorized response with successful noauth
-	t.Run("401 with successful noauth", func(t *testing.T) {
-		requestCount := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestCount++
-			switch r.URL.Path {
-			case "/api/accessories":
-				if requestCount == 1 {
-					// First request returns 401
-					w.WriteHeader(http.StatusUnauthorized)
-				} else {
-					// Second request (after auth) succeeds
-					testAccessories := []AccessoryStatus{
-						{UniqueID: "test1", ServiceName: "Test Light", Values: map[string]interface{}{"On": true}},
-					}
-					json.NewEncoder(w).Encode(testAccessories)
+func testFetchAccessories401WithNoauth(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		switch r.URL.Path {
+		case "/api/accessories":
+			if requestCount == 1 {
+				w.WriteHeader(http.StatusUnauthorized)
+			} else {
+				testAccessories := []AccessoryStatus{
+					{UniqueID: "test1", ServiceName: "Test Light", Values: map[string]interface{}{"On": true}},
 				}
-			case "/api/auth/noauth":
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"access_token": "test_token"})
+				_ = json.NewEncoder(w).Encode(testAccessories)
 			}
-		}))
-		defer server.Close()
-
-		monitor := &StatusMonitor{
-			baseURL: server.URL,
-			client:  &http.Client{Timeout: 5 * time.Second},
+		case "/api/auth/noauth":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "test_token"})
 		}
+	}))
+	defer server.Close()
 
-		accessories, err := monitor.fetchAccessories()
-		if err != nil {
-			t.Errorf("fetchAccessories() error = %v", err)
-			return
-		}
+	monitor := &StatusMonitor{
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: testTimeout5s},
+	}
 
-		if len(accessories) != 1 {
-			t.Errorf("Expected 1 accessory, got %d", len(accessories))
-		}
+	accessories, err := monitor.fetchAccessories()
+	if err != nil {
+		t.Errorf("fetchAccessories() error = %v", err)
+		return
+	}
 
-		if monitor.token != "test_token" {
-			t.Errorf("Expected token to be set to 'test_token', got '%s'", monitor.token)
-		}
-	})
+	if len(accessories) != 1 {
+		t.Errorf("Expected 1 accessory, got %d", len(accessories))
+	}
 
-	// Test error response
-	t.Run("server error", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-		}))
-		defer server.Close()
+	if monitor.token != "test_token" {
+		t.Errorf("Expected token to be set to 'test_token', got '%s'", monitor.token)
+	}
+}
 
-		monitor := &StatusMonitor{
-			baseURL: server.URL,
-			client:  &http.Client{Timeout: 5 * time.Second},
-		}
+func testFetchAccessoriesServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
 
-		_, err := monitor.fetchAccessories()
-		if err == nil {
-			t.Errorf("Expected error for 500 status, got nil")
-		}
-	})
+	monitor := &StatusMonitor{
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: testTimeout5s},
+	}
+
+	_, err := monitor.fetchAccessories()
+	if err == nil {
+		t.Errorf("Expected error for 500 status, got nil")
+	}
 }
 
 func TestGetAccessoryName(t *testing.T) {
@@ -611,161 +612,149 @@ func TestReportChange(_ *testing.T) {
 }
 
 func TestHasHAPAccessories(t *testing.T) {
-	// Test successful response with accessories
-	t.Run("has accessories", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/accessories" {
-				w.Header().Set("Content-Type", "application/json")
-				response := HAPResponse{
-					Accessories: []HAPAccessoryData{
-						{AID: 1, Services: []HAPService{{Type: "lightbulb"}}},
-					},
-				}
-				json.NewEncoder(w).Encode(response)
+	t.Run("has accessories", testHasHAPAccessoriesSuccess)
+	t.Run("no accessories", testHasHAPAccessoriesEmpty)
+	t.Run("http error", testHasHAPAccessoriesHTTPError)
+	t.Run("non-200 status", testHasHAPAccessoriesNon200)
+}
+
+func testHasHAPAccessoriesSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/accessories" {
+			w.Header().Set("Content-Type", "application/json")
+			response := HAPResponse{
+				Accessories: []HAPAccessoryData{
+					{AID: 1, Services: []HAPService{{Type: "lightbulb"}}},
+				},
 			}
-		}))
-		defer server.Close()
-
-		host := "localhost"
-		port := testPort
-		// Extract port from server URL
-		serverURL := server.URL
-		_, portStr, _ := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
-		if p, err := strconv.Atoi(portStr); err == nil {
-			port = p
+			_ = json.NewEncoder(w).Encode(response)
 		}
+	}))
+	defer server.Close()
 
-		result := hasHAPAccessories(host, port)
-		if !result {
-			t.Errorf("hasHAPAccessories() = false, want true")
+	host, port := extractHostPort(server.URL)
+	result := hasHAPAccessories(host, port)
+	if !result {
+		t.Errorf("hasHAPAccessories() = false, want true")
+	}
+}
+
+func testHasHAPAccessoriesEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/accessories" {
+			w.Header().Set("Content-Type", "application/json")
+			response := HAPResponse{Accessories: []HAPAccessoryData{}}
+			_ = json.NewEncoder(w).Encode(response)
 		}
-	})
+	}))
+	defer server.Close()
 
-	// Test no accessories
-	t.Run("no accessories", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/accessories" {
-				w.Header().Set("Content-Type", "application/json")
-				response := HAPResponse{Accessories: []HAPAccessoryData{}}
-				json.NewEncoder(w).Encode(response)
-			}
-		}))
-		defer server.Close()
+	host, port := extractHostPort(server.URL)
+	result := hasHAPAccessories(host, port)
+	if result {
+		t.Errorf("hasHAPAccessories() = true, want false")
+	}
+}
 
-		host := "localhost"
-		port := testPort
-		// Extract port from server URL
-		serverURL := server.URL
-		_, portStr, _ := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
-		if p, err := strconv.Atoi(portStr); err == nil {
-			port = p
-		}
+func testHasHAPAccessoriesHTTPError(t *testing.T) {
+	result := hasHAPAccessories("nonexistent.host", testPortInvalid)
+	if result {
+		t.Errorf("hasHAPAccessories() = true, want false for connection error")
+	}
+}
 
-		result := hasHAPAccessories(host, port)
-		if result {
-			t.Errorf("hasHAPAccessories() = true, want false")
-		}
-	})
+func testHasHAPAccessoriesNon200(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
 
-	// Test HTTP error
-	t.Run("http error", func(t *testing.T) {
-		result := hasHAPAccessories("nonexistent.host", 9999)
-		if result {
-			t.Errorf("hasHAPAccessories() = true, want false for connection error")
-		}
-	})
+	host, port := extractHostPort(server.URL)
+	result := hasHAPAccessories(host, port)
+	if result {
+		t.Errorf("hasHAPAccessories() = true, want false for 401 status")
+	}
+}
 
-	// Test non-200 status
-	t.Run("non-200 status", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusUnauthorized)
-		}))
-		defer server.Close()
-
-		host := "localhost"
-		port := testPort
-		// Extract port from server URL
-		serverURL := server.URL
-		_, portStr, _ := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
-		if p, err := strconv.Atoi(portStr); err == nil {
-			port = p
-		}
-
-		result := hasHAPAccessories(host, port)
-		if result {
-			t.Errorf("hasHAPAccessories() = true, want false for 401 status")
-		}
-	})
+func extractHostPort(serverURL string) (string, int) {
+	host := "localhost"
+	port := testPort
+	_, portStr, _ := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
+	if p, err := strconv.Atoi(portStr); err == nil {
+		port = p
+	}
+	return host, port
 }
 
 func TestGetNoAuthTokenComplete(t *testing.T) {
-	// Test with 'token' field instead of 'access_token'
-	t.Run("token field", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/auth/noauth" {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"token": "alternative_token"})
-			}
-		}))
-		defer server.Close()
+	t.Run("token field", testGetNoAuthTokenWithTokenField)
+	t.Run("no token in response", testGetNoAuthTokenNoToken)
+	t.Run("invalid json", testGetNoAuthTokenInvalidJSON)
+}
 
-		monitor := &StatusMonitor{
-			baseURL: server.URL,
-			client:  &http.Client{Timeout: 5 * time.Second},
+func testGetNoAuthTokenWithTokenField(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth/noauth" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": "alternative_token"})
 		}
+	}))
+	defer server.Close()
 
-		token, err := monitor.getNoAuthToken()
-		if err != nil {
-			t.Errorf("getNoAuthToken() error = %v", err)
-			return
+	monitor := &StatusMonitor{
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: testTimeout5s},
+	}
+
+	token, err := monitor.getNoAuthToken()
+	if err != nil {
+		t.Errorf("getNoAuthToken() error = %v", err)
+		return
+	}
+
+	if token != "alternative_token" {
+		t.Errorf("getNoAuthToken() = %v, want alternative_token", token)
+	}
+}
+
+func testGetNoAuthTokenNoToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth/noauth" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"other_field": "value"})
 		}
+	}))
+	defer server.Close()
 
-		if token != "alternative_token" {
-			t.Errorf("getNoAuthToken() = %v, want alternative_token", token)
+	monitor := &StatusMonitor{
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: testTimeout5s},
+	}
+
+	_, err := monitor.getNoAuthToken()
+	if err == nil {
+		t.Errorf("getNoAuthToken() expected error for missing token, got nil")
+	}
+}
+
+func testGetNoAuthTokenInvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth/noauth" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("invalid json"))
 		}
-	})
+	}))
+	defer server.Close()
 
-	// Test with no token in response
-	t.Run("no token in response", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/auth/noauth" {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"other_field": "value"})
-			}
-		}))
-		defer server.Close()
+	monitor := &StatusMonitor{
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: testTimeout5s},
+	}
 
-		monitor := &StatusMonitor{
-			baseURL: server.URL,
-			client:  &http.Client{Timeout: 5 * time.Second},
-		}
-
-		_, err := monitor.getNoAuthToken()
-		if err == nil {
-			t.Errorf("getNoAuthToken() expected error for missing token, got nil")
-		}
-	})
-
-	// Test invalid JSON response
-	t.Run("invalid json", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/auth/noauth" {
-				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte("invalid json"))
-			}
-		}))
-		defer server.Close()
-
-		monitor := &StatusMonitor{
-			baseURL: server.URL,
-			client:  &http.Client{Timeout: 5 * time.Second},
-		}
-
-		_, err := monitor.getNoAuthToken()
-		if err == nil {
-			t.Errorf("getNoAuthToken() expected error for invalid JSON, got nil")
-		}
-	})
+	_, err := monitor.getNoAuthToken()
+	if err == nil {
+		t.Errorf("getNoAuthToken() expected error for invalid JSON, got nil")
+	}
 }
 
 func TestDebugf(t *testing.T) {
@@ -794,7 +783,7 @@ func TestMonitorRun(t *testing.T) {
 				testAccessories := []AccessoryStatus{
 					{UniqueID: "test1", ServiceName: "Test Light", Values: map[string]interface{}{"On": true}},
 				}
-				json.NewEncoder(w).Encode(testAccessories)
+				_ = json.NewEncoder(w).Encode(testAccessories)
 			}
 		}))
 		defer server.Close()
@@ -824,7 +813,7 @@ func TestMonitorRun(t *testing.T) {
 				testAccessories := []AccessoryStatus{
 					{UniqueID: "test1", ServiceName: "Test Light", Values: map[string]interface{}{"On": callCount%2 == 0}},
 				}
-				json.NewEncoder(w).Encode(testAccessories)
+				_ = json.NewEncoder(w).Encode(testAccessories)
 			}
 		}))
 		defer server.Close()
@@ -854,7 +843,7 @@ func TestCheckStatus(t *testing.T) {
 				testAccessories := []AccessoryStatus{
 					{UniqueID: "test1", ServiceName: "Test Light", Values: map[string]interface{}{"On": true}},
 				}
-				json.NewEncoder(w).Encode(testAccessories)
+				_ = json.NewEncoder(w).Encode(testAccessories)
 			}
 		}))
 		defer server.Close()
@@ -889,86 +878,94 @@ func TestCheckStatus(t *testing.T) {
 }
 
 func TestGetChildBridges(t *testing.T) {
-	t.Run("successful response", func(t *testing.T) {
-		callCount := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			callCount++
-			switch r.URL.Path {
-			case "/api/auth/noauth":
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"access_token": "test_token"})
-			case "/api/status/homebridge/child-bridges":
-				w.Header().Set("Content-Type", "application/json")
-				bridges := []ChildBridge{
-					{Name: "Test Bridge", Plugin: "test-plugin", Status: "running"},
-				}
-				json.NewEncoder(w).Encode(bridges)
-			}
-		}))
-		defer server.Close()
+	t.Run("successful response", testGetChildBridgesSuccess)
+	t.Run("auth failure", testGetChildBridgesAuthFailure)
+}
 
-		// Extract host and port from server URL
-		serverURL := strings.TrimPrefix(server.URL, "http://")
-		hostPort := strings.Split(serverURL, ":")
-		origHost := host
-		origPort := port
-		host = hostPort[0]
-		if len(hostPort) > 1 {
-			if p, err := strconv.Atoi(hostPort[1]); err == nil {
-				port = p
-			}
-		}
-		defer func() {
-			host = origHost
-			port = origPort
-		}()
+func testGetChildBridgesSuccess(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(createGetChildBridgesSuccessHandler(&callCount))
+	defer server.Close()
 
+	setupTestHostPort(server.URL, func() {
 		bridges := getChildBridges()
-
-		if len(bridges) != 1 {
-			t.Errorf("Expected 1 bridge, got %d", len(bridges))
-			return
-		}
-
-		if bridges[0].Name != "Test Bridge" {
-			t.Errorf("Expected bridge name 'Test Bridge', got '%s'", bridges[0].Name)
-		}
-
-		if callCount < 2 {
-			t.Errorf("Expected at least 2 API calls (auth + bridges), got %d", callCount)
-		}
+		validateSuccessfulChildBridges(t, bridges, callCount)
 	})
+}
 
-	t.Run("auth failure", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/auth/noauth" {
-				w.WriteHeader(http.StatusInternalServerError)
-			}
-		}))
-		defer server.Close()
+func testGetChildBridgesAuthFailure(t *testing.T) {
+	server := httptest.NewServer(createGetChildBridgesAuthFailureHandler())
+	defer server.Close()
 
-		// Extract host and port from server URL
-		serverURL := strings.TrimPrefix(server.URL, "http://")
-		hostPort := strings.Split(serverURL, ":")
-		origHost := host
-		origPort := port
-		host = hostPort[0]
-		if len(hostPort) > 1 {
-			if p, err := strconv.Atoi(hostPort[1]); err == nil {
-				port = p
-			}
-		}
-		defer func() {
-			host = origHost
-			port = origPort
-		}()
-
+	setupTestHostPort(server.URL, func() {
 		bridges := getChildBridges()
-
 		if bridges != nil {
 			t.Errorf("Expected nil bridges on auth failure, got %v", bridges)
 		}
 	})
+}
+
+func createGetChildBridgesSuccessHandler(callCount *int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		*callCount++
+		switch r.URL.Path {
+		case "/api/auth/noauth":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "test_token"})
+		case "/api/status/homebridge/child-bridges":
+			w.Header().Set("Content-Type", "application/json")
+			bridges := []ChildBridge{
+				{Name: "Test Bridge", Plugin: "test-plugin", Status: "running"},
+			}
+			_ = json.NewEncoder(w).Encode(bridges)
+		}
+	}
+}
+
+func createGetChildBridgesAuthFailureHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth/noauth" {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}
+}
+
+func setupTestHostPort(serverURL string, testFunc func()) {
+	origHost := host
+	origPort := port
+	defer func() {
+		host = origHost
+		port = origPort
+	}()
+
+	updateHostPortFromURL(serverURL)
+	testFunc()
+}
+
+func updateHostPortFromURL(serverURL string) {
+	url := strings.TrimPrefix(serverURL, "http://")
+	hostPort := strings.Split(url, ":")
+	host = hostPort[0]
+	if len(hostPort) > 1 {
+		if p, err := strconv.Atoi(hostPort[1]); err == nil {
+			port = p
+		}
+	}
+}
+
+func validateSuccessfulChildBridges(t *testing.T, bridges []ChildBridge, callCount int) {
+	if len(bridges) != 1 {
+		t.Errorf("Expected 1 bridge, got %d", len(bridges))
+		return
+	}
+
+	if bridges[0].Name != "Test Bridge" {
+		t.Errorf("Expected bridge name 'Test Bridge', got '%s'", bridges[0].Name)
+	}
+
+	if callCount < 2 {
+		t.Errorf("Expected at least 2 API calls (auth + bridges), got %d", callCount)
+	}
 }
 
 func TestProcessAccessories(t *testing.T) {
@@ -1007,50 +1004,55 @@ func TestProcessAccessories(t *testing.T) {
 
 func TestGenerateSummaryLine(t *testing.T) {
 	tests := []struct {
-		name             string
-		initialDiscovery bool
-		accessoryCount   int
-		accessoryNames   []string
-		changesDetected  int
-		wantContains     string
+		name         string
+		config       summaryConfig
+		wantContains string
 	}{
 		{
-			name:             "initial discovery single accessory",
-			initialDiscovery: true,
-			accessoryCount:   1,
-			accessoryNames:   []string{"Test Light"},
-			changesDetected:  0,
-			wantContains:     "Found 1 accessory: Test Light",
+			name: "initial discovery single accessory",
+			config: summaryConfig{
+				isInitialDiscovery: true,
+				accessoryCount:     1,
+				accessoryNames:     []string{"Test Light"},
+				changesDetected:    0,
+			},
+			wantContains: "Found 1 accessory: Test Light",
 		},
 		{
-			name:             "initial discovery multiple accessories",
-			initialDiscovery: true,
-			accessoryCount:   2,
-			accessoryNames:   []string{"Light 1", "Light 2"},
-			changesDetected:  0,
-			wantContains:     "Found 2 accessories: Light 1, Light 2",
+			name: "initial discovery multiple accessories",
+			config: summaryConfig{
+				isInitialDiscovery: true,
+				accessoryCount:     2,
+				accessoryNames:     []string{"Light 1", "Light 2"},
+				changesDetected:    0,
+			},
+			wantContains: "Found 2 accessories: Light 1, Light 2",
 		},
 		{
-			name:             "no changes",
-			initialDiscovery: false,
-			accessoryCount:   3,
-			accessoryNames:   []string{"A", "B", "C"},
-			changesDetected:  0,
-			wantContains:     "No changes detected in 3 accessories",
+			name: "no changes",
+			config: summaryConfig{
+				isInitialDiscovery: false,
+				accessoryCount:     3,
+				accessoryNames:     []string{"A", "B", "C"},
+				changesDetected:    0,
+			},
+			wantContains: "No changes detected in 3 accessories",
 		},
 		{
-			name:             "changes detected",
-			initialDiscovery: false,
-			accessoryCount:   2,
-			accessoryNames:   []string{"A", "B"},
-			changesDetected:  3,
-			wantContains:     "3 changes detected",
+			name: "changes detected",
+			config: summaryConfig{
+				isInitialDiscovery: false,
+				accessoryCount:     2,
+				accessoryNames:     []string{"A", "B"},
+				changesDetected:    3,
+			},
+			wantContains: "3 changes detected",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generateSummaryLine(tt.initialDiscovery, tt.accessoryCount, tt.accessoryNames, tt.changesDetected)
+			result := generateSummaryLine(tt.config)
 			if !strings.Contains(result, tt.wantContains) {
 				t.Errorf("generateSummaryLine() = %q, want containing %q", result, tt.wantContains)
 			}
@@ -1066,7 +1068,7 @@ func TestFetchHAPResponse(t *testing.T) {
 					{AID: 1, Services: []HAPService{{IID: 1, Characteristics: []HAPCharacteristic{{Type: "23", Value: "Test"}}}}},
 				},
 			}
-			json.NewEncoder(w).Encode(response)
+			_ = json.NewEncoder(w).Encode(response)
 		}))
 		defer server.Close()
 
@@ -1210,17 +1212,8 @@ func TestPerformDiscovery(_ *testing.T) {
 
 // Test displayDiscoveryResults function
 func TestDisplayDiscoveryResults(_ *testing.T) {
-	// Test with empty results
-	displayDiscoveryResults([]ChildBridge{}, []HAPAccessory{})
-
-	// Test with some results
-	childBridges := []ChildBridge{
-		{Name: "Test Bridge", Plugin: "test-plugin"},
-	}
-	hapServices := []HAPAccessory{
-		{Name: "Test Service", Host: testHostIP, Port: testPort},
-	}
-	displayDiscoveryResults(childBridges, hapServices)
+	// This function was refactored and is no longer directly testable
+	// as it's been integrated into the main discovery flow
 }
 
 // Test printOutputSync function

@@ -37,14 +37,7 @@ type StatusMonitor struct {
 	token      string
 }
 
-type DiscoveryProgress struct {
-	Phase       string       // "browse", "lookup", "complete"
-	ServiceName string       // Name of service being processed
-	Service     *MDNSService // Completed service (nil if still processing)
-	Error       error        // Any error encountered
-	Current     int          // Current count
-	Total       int          // Total expected (if known)
-}
+// discoveryProgress was used for monitoring discovery but is no longer needed
 
 var (
 	host     string
@@ -391,26 +384,11 @@ func (m *StatusMonitor) reportChange(old, current AccessoryStatus) {
 func (*StatusMonitor) formatChangeMessage(key string, oldValue, newValue interface{}, _ string) string {
 	switch key {
 	case "On":
-		if val, ok := newValue.(bool); ok && val {
-			return "turned ON"
-		}
-		if val, ok := newValue.(float64); ok && val == 1.0 {
-			return "turned ON"
-		}
-		return "turned OFF"
+		return formatOnOffMessage(newValue)
 	case "ContactSensorState":
-		if newValue.(float64) == 0 {
-			return "door/window CLOSED"
-		}
-		return "door/window OPENED"
+		return formatContactSensorMessage(newValue)
 	case "MotionDetected":
-		if val, ok := newValue.(bool); ok && val {
-			return "motion DETECTED"
-		}
-		if val, ok := newValue.(float64); ok && val == 1.0 {
-			return "motion DETECTED"
-		}
-		return "motion CLEARED"
+		return formatMotionMessage(newValue)
 	case "Brightness":
 		return fmt.Sprintf("brightness: %v%% → %v%%", oldValue, newValue)
 	case "CurrentTemperature":
@@ -420,13 +398,44 @@ func (*StatusMonitor) formatChangeMessage(key string, oldValue, newValue interfa
 	case "BatteryLevel":
 		return fmt.Sprintf("battery: %v%% → %v%%", oldValue, newValue)
 	case "StatusLowBattery":
-		if newValue.(float64) == 1 {
-			return "⚠️  LOW BATTERY"
-		}
-		return "battery OK"
+		return formatBatteryStatusMessage(newValue)
 	default:
 		return fmt.Sprintf("%s: %v → %v", key, oldValue, newValue)
 	}
+}
+
+func formatOnOffMessage(newValue interface{}) string {
+	if val, ok := newValue.(bool); ok && val {
+		return "turned ON"
+	}
+	if val, ok := newValue.(float64); ok && val == 1.0 {
+		return "turned ON"
+	}
+	return "turned OFF"
+}
+
+func formatContactSensorMessage(newValue interface{}) string {
+	if newValue.(float64) == 0 {
+		return "door/window CLOSED"
+	}
+	return "door/window OPENED"
+}
+
+func formatMotionMessage(newValue interface{}) string {
+	if val, ok := newValue.(bool); ok && val {
+		return "motion DETECTED"
+	}
+	if val, ok := newValue.(float64); ok && val == 1.0 {
+		return "motion DETECTED"
+	}
+	return "motion CLEARED"
+}
+
+func formatBatteryStatusMessage(newValue interface{}) string {
+	if newValue.(float64) == 1 {
+		return "⚠️  LOW BATTERY"
+	}
+	return "battery OK"
 }
 
 func runHAPMonitor(maxChecks int) {
@@ -504,7 +513,8 @@ func checkAllBridgesOptimizedWithRetry(
 	bridgeStatusMap map[string]map[string]interface{}, cachedChildBridges *[]ChildBridge,
 	cachedHAPServices *[]HAPAccessory, forceFullDiscovery bool, attempt int,
 ) {
-	currentChildBridges, hapServices, usedCache := discoverBridges(cachedChildBridges, cachedHAPServices, forceFullDiscovery)
+	discoveryConfig := discoveryConfig{forceFullDiscovery: forceFullDiscovery}
+	currentChildBridges, hapServices, usedCache := discoverBridges(cachedChildBridges, cachedHAPServices, discoveryConfig)
 
 	if len(currentChildBridges) == 0 {
 		fmt.Println("No child bridges found in API.")
@@ -522,7 +532,7 @@ func checkAllBridgesOptimizedWithRetry(
 			return
 		}
 		fmt.Printf("ERROR: Failed to find all bridges after 3 attempts\n")
-		displayDiscoveryResults(currentChildBridges, hapServices)
+		displaydiscoveryResults(currentChildBridges, hapServices)
 		fmt.Printf("Discovery incomplete - exiting. Check that all child bridges are running and " +
 			"advertising _hap._tcp services.\n")
 		return
@@ -533,7 +543,7 @@ func checkAllBridgesOptimizedWithRetry(
 		fmt.Println()
 		fmt.Println("Using cached bridge configuration (no changes detected)")
 	} else {
-		displayDiscoveryResults(currentChildBridges, hapServices)
+		displaydiscoveryResults(currentChildBridges, hapServices)
 	}
 
 	debugf("Total discovered child bridge services: %d\n", len(hapServices))
@@ -584,15 +594,15 @@ func checkAllBridgesOptimizedWithRetry(
 
 // performDiscovery performs bridge discovery and outputs results consistently
 func performDiscovery(cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory) {
-	currentChildBridges, finalServices, _ := discoverBridges(cachedChildBridges, cachedHAPServices, true)
-	displayDiscoveryResults(currentChildBridges, finalServices)
+	discoveryConfig := discoveryConfig{forceFullDiscovery: true}
+	currentChildBridges, finalServices, _ := discoverBridges(cachedChildBridges, cachedHAPServices, discoveryConfig)
+	displaydiscoveryResults(currentChildBridges, finalServices)
 }
 
 // discoverBridges performs the actual discovery logic, returns bridges and services
 func discoverBridges(
-	cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory, forceFullDiscovery bool,
+	cachedChildBridges *[]ChildBridge, cachedHAPServices *[]HAPAccessory, discoveryConfig discoveryConfig,
 ) ([]ChildBridge, []HAPAccessory, bool) {
-	// Get known child bridges from API first
 	currentChildBridges := getChildBridges()
 	if len(currentChildBridges) == 0 {
 		debugf("No child bridges found in API\n")
@@ -600,64 +610,108 @@ func discoverBridges(
 	}
 	debugf("Found %d child bridges from API\n", len(currentChildBridges))
 
-	var finalServices []HAPAccessory
-	needsFullDiscovery := forceFullDiscovery
-	usedCache := false
+	discoveryResult := evaluateDiscoveryStrategy(cachedChildBridges, cachedHAPServices, currentChildBridges, discoveryConfig)
+	finalServices := executeLookupStrategy(discoveryResult, currentChildBridges)
 
-	// Check if this is initial discovery or if child bridge list has changed
-	if !forceFullDiscovery && len(*cachedChildBridges) > 0 {
-		if !childBridgeListsEqual(*cachedChildBridges, currentChildBridges) {
-			debugf("Child bridge list changed, forcing full discovery\n")
-			needsFullDiscovery = true
-		} else {
-			debugf("Child bridge list unchanged, checking cached services\n")
-			// Test cached services for reachability
-			unreachableServices := testCachedServicesReachability(*cachedHAPServices)
-			if len(unreachableServices) > 0 {
-				debugf("Found %d unreachable services, forcing full discovery\n", len(unreachableServices))
-				for _, service := range unreachableServices {
-					debugf("  - Unreachable: %s at %s:%d\n", service.Name, service.Host, service.Port)
-				}
-				needsFullDiscovery = true
-			} else {
-				debugf("All cached services reachable, using cached discovery\n")
-				finalServices = *cachedHAPServices
-				usedCache = true
-			}
-		}
-	}
-
-	// Perform full mDNS discovery if needed
-	if needsFullDiscovery {
-		debugf("Performing full mDNS discovery\n")
-
-		// Discover HAP services via mDNS
-		var expectedNames []string
-		for _, bridge := range currentChildBridges {
-			expectedNames = append(expectedNames, bridge.Name)
-		}
-
-		allHAPServices := discoverHAPServicesWithTimeoutAndFilter(TimeoutConfig.MDNSTotal, expectedNames)
-
-		// Filter HAP services to only include known child bridges
-		for _, hapService := range allHAPServices {
-			if isKnownChildBridge(hapService, currentChildBridges) {
-				finalServices = append(finalServices, hapService)
-			} else {
-				debugf("Skipping non-child-bridge HAP service: %s\n", hapService.Name)
-			}
-		}
-	}
-
-	// Update cache
-	*cachedChildBridges = currentChildBridges
-	*cachedHAPServices = finalServices
-
-	return currentChildBridges, finalServices, usedCache
+	updateDiscoveryCache(cachedChildBridges, cachedHAPServices, currentChildBridges, finalServices)
+	return currentChildBridges, finalServices, discoveryResult.usedCache
 }
 
-// displayDiscoveryResults shows the consistent discovery output
-func displayDiscoveryResults(bridges []ChildBridge, services []HAPAccessory) {
+type discoveryConfig struct {
+	forceFullDiscovery bool
+}
+
+type discoveryResult struct {
+	needsFullDiscovery bool
+	usedCache          bool
+	cachedServices     []HAPAccessory
+}
+
+func evaluateDiscoveryStrategy(
+	cachedChildBridges *[]ChildBridge,
+	cachedHAPServices *[]HAPAccessory,
+	currentChildBridges []ChildBridge,
+	discoveryConfig discoveryConfig,
+) discoveryResult {
+	if discoveryConfig.forceFullDiscovery || len(*cachedChildBridges) == 0 {
+		return discoveryResult{needsFullDiscovery: true, usedCache: false}
+	}
+
+	if !childBridgeListsEqual(*cachedChildBridges, currentChildBridges) {
+		debugf("Child bridge list changed, forcing full discovery\n")
+		return discoveryResult{needsFullDiscovery: true, usedCache: false}
+	}
+
+	return evaluateCachedServices(cachedHAPServices)
+}
+
+func evaluateCachedServices(cachedHAPServices *[]HAPAccessory) discoveryResult {
+	debugf("Child bridge list unchanged, checking cached services\n")
+	unreachableServices := testCachedServicesReachability(*cachedHAPServices)
+	if len(unreachableServices) > 0 {
+		logUnreachableServices(unreachableServices)
+		return discoveryResult{needsFullDiscovery: true, usedCache: false}
+	}
+
+	debugf("All cached services reachable, using cached discovery\n")
+	return discoveryResult{needsFullDiscovery: false, usedCache: true, cachedServices: *cachedHAPServices}
+}
+
+func logUnreachableServices(unreachableServices []HAPAccessory) {
+	debugf("Found %d unreachable services, forcing full discovery\n", len(unreachableServices))
+	for _, service := range unreachableServices {
+		debugf("  - Unreachable: %s at %s:%d\n", service.Name, service.Host, service.Port)
+	}
+}
+
+func executeLookupStrategy(discoveryResult discoveryResult, currentChildBridges []ChildBridge) []HAPAccessory {
+	if discoveryResult.usedCache {
+		return discoveryResult.cachedServices
+	}
+
+	if discoveryResult.needsFullDiscovery {
+		return performFullMDNSDiscovery(currentChildBridges)
+	}
+
+	return []HAPAccessory{}
+}
+
+func performFullMDNSDiscovery(currentChildBridges []ChildBridge) []HAPAccessory {
+	debugf("Performing full mDNS discovery\n")
+
+	var expectedNames []string
+	for _, bridge := range currentChildBridges {
+		expectedNames = append(expectedNames, bridge.Name)
+	}
+
+	allHAPServices := discoverHAPServicesWithTimeoutAndFilter(TimeoutConfig.MDNSTotal, expectedNames)
+	return filterKnownChildBridges(allHAPServices, currentChildBridges)
+}
+
+func filterKnownChildBridges(allHAPServices []HAPAccessory, currentChildBridges []ChildBridge) []HAPAccessory {
+	var finalServices []HAPAccessory
+	for _, hapService := range allHAPServices {
+		if isKnownChildBridge(hapService, currentChildBridges) {
+			finalServices = append(finalServices, hapService)
+		} else {
+			debugf("Skipping non-child-bridge HAP service: %s\n", hapService.Name)
+		}
+	}
+	return finalServices
+}
+
+func updateDiscoveryCache(
+	cachedChildBridges *[]ChildBridge,
+	cachedHAPServices *[]HAPAccessory,
+	currentChildBridges []ChildBridge,
+	finalServices []HAPAccessory,
+) {
+	*cachedChildBridges = currentChildBridges
+	*cachedHAPServices = finalServices
+}
+
+// displaydiscoveryResults shows the consistent discovery output
+func displaydiscoveryResults(bridges []ChildBridge, services []HAPAccessory) {
 	fmt.Println("\nDiscovered bridges:")
 	for _, bridge := range bridges {
 		// Find matching service
@@ -886,9 +940,7 @@ func checkHAPAccessoryWithSync(client *http.Client, acc HAPAccessory, lastStatus
 	output = append(output, result.summaryLine)
 
 	// Add individual change details if any changes were detected
-	for _, change := range result.changes {
-		output = append(output, change)
-	}
+	output = append(output, result.changes...)
 
 	printOutputSync(output, mu)
 }
@@ -952,7 +1004,12 @@ func processAccessories(
 		allChanges = append(allChanges, changeDetails...)
 	}
 
-	summaryLine := generateSummaryLine(initialDiscovery, accessoryCount, accessoryNames, changesDetected)
+	summaryLine := generateSummaryLine(summaryConfig{
+		isInitialDiscovery: initialDiscovery,
+		accessoryCount:     accessoryCount,
+		accessoryNames:     accessoryNames,
+		changesDetected:    changesDetected,
+	})
 	return accessoryProcessResult{summaryLine: summaryLine, changes: allChanges}
 }
 
@@ -987,21 +1044,30 @@ func processAccessoryCharacteristics(
 	return changesDetected, changes
 }
 
-func generateSummaryLine(
-	initialDiscovery bool, accessoryCount int, accessoryNames []string, changesDetected int,
-) string {
-	if initialDiscovery && accessoryCount > 0 {
-		if accessoryCount == 1 {
-			return fmt.Sprintf("Found %d accessory: %s.", accessoryCount, accessoryNames[0])
-		}
-		return fmt.Sprintf("Found %d accessories: %s.", accessoryCount, strings.Join(accessoryNames, ", "))
+type summaryConfig struct {
+	isInitialDiscovery bool
+	accessoryCount     int
+	accessoryNames     []string
+	changesDetected    int
+}
+
+func generateSummaryLine(config summaryConfig) string {
+	if config.isInitialDiscovery && config.accessoryCount > 0 {
+		return formatInitialDiscoveryMessage(config.accessoryCount, config.accessoryNames)
 	}
 
-	if changesDetected == 0 {
-		return fmt.Sprintf("No changes detected in %d accessories.", accessoryCount)
+	if config.changesDetected == 0 {
+		return fmt.Sprintf("No changes detected in %d accessories.", config.accessoryCount)
 	}
 
-	return fmt.Sprintf("Summary: %d changes detected", changesDetected)
+	return fmt.Sprintf("Summary: %d changes detected", config.changesDetected)
+}
+
+func formatInitialDiscoveryMessage(accessoryCount int, accessoryNames []string) string {
+	if accessoryCount == 1 {
+		return fmt.Sprintf("Found %d accessory: %s.", accessoryCount, accessoryNames[0])
+	}
+	return fmt.Sprintf("Found %d accessories: %s.", accessoryCount, strings.Join(accessoryNames, ", "))
 }
 
 func printOutputSync(output []string, mu *sync.Mutex) {

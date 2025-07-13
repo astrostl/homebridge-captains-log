@@ -213,21 +213,53 @@ func (*MDNSClient) updateServicesFromMap(serviceMap map[string]bool) []string {
 func (c *MDNSClient) LookupService(_ context.Context, serviceName, serviceType string) (*MDNSService, error) {
 	debugf("Looking up service: %s.%s\n", serviceName, serviceType)
 
-	// Create multicast UDP connection
-	mcastAddr, err := net.ResolveUDPAddr("udp4", "224.0.0.251:5353")
+	conn, mcastAddr, err := c.setupLookupConnection()
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve mDNS address: %w", err)
-	}
-
-	// Listen on multicast group
-	conn, err := net.ListenMulticastUDP("udp4", nil, mcastAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create multicast UDP listener: %w", err)
+		return nil, err
 	}
 	defer conn.Close()
 
-	// Create DNS query for SRV and TXT records
 	fullName := serviceName + "." + serviceType + ".local."
+	if err := c.sendLookupQuery(conn, mcastAddr, fullName); err != nil {
+		return nil, err
+	}
+
+	service := c.collectLookupResponses(conn, serviceName)
+	c.logLookupResult(serviceName, service)
+	return service, nil
+}
+
+func (*MDNSClient) setupLookupConnection() (*net.UDPConn, *net.UDPAddr, error) {
+	mcastAddr, err := net.ResolveUDPAddr("udp4", "224.0.0.251:5353")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to resolve mDNS address: %w", err)
+	}
+
+	conn, err := net.ListenMulticastUDP("udp4", nil, mcastAddr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create multicast UDP listener: %w", err)
+	}
+
+	return conn, mcastAddr, nil
+}
+
+func (*MDNSClient) sendLookupQuery(conn *net.UDPConn, mcastAddr *net.UDPAddr, fullName string) error {
+	msg := createLookupMessage(fullName)
+	packed, err := msg.Pack()
+	if err != nil {
+		return fmt.Errorf("failed to pack DNS message: %w", err)
+	}
+
+	_, err = conn.WriteTo(packed, mcastAddr)
+	if err != nil {
+		return fmt.Errorf("failed to send query: %w", err)
+	}
+
+	debugf("Sent lookup query for %s\n", fullName)
+	return nil
+}
+
+func createLookupMessage(fullName string) dnsmessage.Message {
 	var msg dnsmessage.Message
 	msg.Header.ID = 0
 	msg.Header.OpCode = 0
@@ -244,58 +276,51 @@ func (c *MDNSClient) LookupService(_ context.Context, serviceName, serviceType s
 			Class: dnsmessage.ClassINET,
 		},
 	}
+	return msg
+}
 
-	packed, err := msg.Pack()
-	if err != nil {
-		return nil, fmt.Errorf("failed to pack DNS message: %w", err)
-	}
-
-	// Send query to multicast address
-	_, err = conn.WriteTo(packed, mcastAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send query: %w", err)
-	}
-
-	debugf("Sent lookup query for %s\n", fullName)
-
-	// Listen for responses with shorter per-service timeout
+func (c *MDNSClient) collectLookupResponses(conn *net.UDPConn, serviceName string) *MDNSService {
 	var service *MDNSService
 	deadline := time.Now().Add(TimeoutConfig.MDNSLookupPerService)
 
 	for time.Now().Before(deadline) && service == nil {
-		if err := conn.SetReadDeadline(time.Now().Add(TimeoutConfig.MDNSReadTimeout)); err != nil {
-			continue
-		}
-
-		buffer := make([]byte, MaxBufSize)
-		n, _, err := conn.ReadFrom(buffer)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
-			}
-			debugf("Read error: %v\n", err)
-			continue
-		}
-
-		// Parse response
-		var response dnsmessage.Message
-		err = response.Unpack(buffer[:n])
-		if err != nil {
-			debugf("Failed to unpack response: %v\n", err)
-			continue
-		}
-
-		// Extract service information
-		service = c.parseServiceResponse(&response, serviceName)
+		service = c.attemptLookupResponse(conn, serviceName)
 	}
 
+	return service
+}
+
+func (c *MDNSClient) attemptLookupResponse(conn *net.UDPConn, serviceName string) *MDNSService {
+	if err := conn.SetReadDeadline(time.Now().Add(TimeoutConfig.MDNSReadTimeout)); err != nil {
+		return nil
+	}
+
+	buffer := make([]byte, MaxBufSize)
+	n, _, err := conn.ReadFrom(buffer)
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return nil
+		}
+		debugf("Read error: %v\n", err)
+		return nil
+	}
+
+	var response dnsmessage.Message
+	err = response.Unpack(buffer[:n])
+	if err != nil {
+		debugf("Failed to unpack response: %v\n", err)
+		return nil
+	}
+
+	return c.parseServiceResponse(&response, serviceName)
+}
+
+func (*MDNSClient) logLookupResult(serviceName string, service *MDNSService) {
 	if service != nil {
 		debugf("Lookup completed for %s: %s:%d\n", serviceName, service.Host, service.Port)
 	} else {
 		debugf("Lookup failed for %s\n", serviceName)
 	}
-
-	return service, nil
 }
 
 // parseServiceResponse extracts service details from a DNS response
@@ -393,14 +418,24 @@ func (c *MDNSClient) DiscoverHomebridgeServices(ctx context.Context) ([]MDNSServ
 func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, expectedNames []string) ([]MDNSService, error) {
 	debugf("Starting Homebridge service discovery with optimized timing\n")
 
-	// Phase 1: Browse for all _hap._tcp services (max configured time, but complete early if possible)
+	serviceNames, err := c.browseHAPServices(ctx, expectedNames)
+	if err != nil {
+		return nil, err
+	}
+
+	servicesToLookup := c.filterServicesForLookup(serviceNames, expectedNames)
+	homebridgeServices := c.performParallelLookups(servicesToLookup)
+
+	return homebridgeServices, nil
+}
+
+func (c *MDNSClient) browseHAPServices(ctx context.Context, expectedNames []string) ([]string, error) {
 	browseCtx, browseCancel := context.WithTimeout(ctx, TimeoutConfig.MDNSBrowseMax)
 	defer browseCancel()
 
-	// Pass expected count to allow early completion
 	expectedServiceCount := len(expectedNames)
 	if expectedServiceCount == 0 {
-		expectedServiceCount = -1 // Unknown count, use full timeout
+		expectedServiceCount = -1
 	}
 
 	serviceNames, err := c.BrowseServicesWithEarlyCompletion(browseCtx, "_hap._tcp", expectedServiceCount)
@@ -409,105 +444,138 @@ func (c *MDNSClient) DiscoverHomebridgeServicesWithFilter(ctx context.Context, e
 	}
 
 	debugf("Found %d _hap._tcp services to examine\n", len(serviceNames))
+	return serviceNames, nil
+}
 
-	// Filter services to only those that might match expected names (if provided)
-	var servicesToLookup []string
-	if len(expectedNames) > 0 {
-		servicesToLookup = filterServicesByExpectedNames(serviceNames, expectedNames)
-		debugf("Filtered to %d services for lookup\n", len(servicesToLookup))
-		debugf("Services to lookup: %v\n", servicesToLookup)
-	} else {
-		servicesToLookup = serviceNames
+func (*MDNSClient) filterServicesForLookup(serviceNames, expectedNames []string) []string {
+	if len(expectedNames) == 0 {
+		return serviceNames
 	}
 
-	// Phase 2: Parallel lookups (max configured time, but complete as soon as all lookups finish)
+	servicesToLookup := filterServicesByExpectedNames(serviceNames, expectedNames)
+	debugf("Filtered to %d services for lookup\n", len(servicesToLookup))
+	debugf("Services to lookup: %v\n", servicesToLookup)
+	return servicesToLookup
+}
+
+func (c *MDNSClient) performParallelLookups(servicesToLookup []string) []MDNSService {
 	lookupCtx, lookupCancel := context.WithTimeout(context.Background(), TimeoutConfig.MDNSLookupMax)
 	defer lookupCancel()
 
-	// Parallelize service lookups using goroutines
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var homebridgeServices []MDNSService
 
 	debugf("Starting parallel lookups for %d services: %v\n", len(servicesToLookup), servicesToLookup)
 
-	// Process services in parallel with reasonable concurrency limit
+	maxConcurrency := c.calculateConcurrency(servicesToLookup)
+	semaphore := make(chan struct{}, maxConcurrency)
+	done := make(chan struct{})
+
+	go c.executeLookupWorkers(lookupCtx, servicesToLookup, semaphore, &wg, &mu, &homebridgeServices, done)
+
+	c.waitForLookupCompletion(lookupCtx, done, len(homebridgeServices))
+	return homebridgeServices
+}
+
+func (*MDNSClient) calculateConcurrency(servicesToLookup []string) int {
 	maxConcurrency := MaxStatementsPerFunc
 	if len(servicesToLookup) < maxConcurrency {
 		maxConcurrency = len(servicesToLookup)
 	}
+	return maxConcurrency
+}
 
-	semaphore := make(chan struct{}, maxConcurrency)
+func (c *MDNSClient) executeLookupWorkers(
+	lookupCtx context.Context,
+	servicesToLookup []string,
+	semaphore chan struct{},
+	wg *sync.WaitGroup,
+	mu *sync.Mutex,
+	homebridgeServices *[]MDNSService,
+	done chan struct{},
+) {
+	defer close(done)
 
-	// Channel to signal completion or timeout
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-
-		for _, serviceName := range servicesToLookup {
-			wg.Add(1)
-			go func(name string) {
-				defer wg.Done()
-
-				debugf("Starting lookup for service: %s\n", name)
-
-				// Acquire semaphore to limit concurrency
-				select {
-				case semaphore <- struct{}{}:
-					defer func() { <-semaphore }()
-				case <-lookupCtx.Done():
-					debugf("Context cancelled before acquiring semaphore for %s\n", name)
-					return // Context cancelled, exit early
-				}
-
-				// Check context before starting lookup
-				select {
-				case <-lookupCtx.Done():
-					debugf("Context cancelled before lookup for %s\n", name)
-					return
-				default:
-				}
-
-				service := c.lookupServiceWithRetries(lookupCtx, name, "_hap._tcp")
-				if service == nil {
-					debugf("Failed to lookup service details for %s\n", name)
-					return
-				}
-
-				debugf("Successfully looked up service %s at %s:%d with TXT records: %v\n",
-					service.Name, service.Host, service.Port, service.TXTRecords)
-
-				// Check if this is a Homebridge service
-				if md, exists := service.TXTRecords["md"]; exists && strings.ToLower(md) == "homebridge" {
-					debugf("Found Homebridge service: %s at %s:%d\n", service.Name, service.Host, service.Port)
-
-					// Thread-safe append to results
-					mu.Lock()
-					homebridgeServices = append(homebridgeServices, *service)
-					mu.Unlock()
-				} else {
-					debugf("Skipping non-Homebridge service: %s (md=%s)\n", service.Name, md)
-				}
-			}(serviceName)
-		}
-
-		// Wait for all goroutines to complete
-		wg.Wait()
-		debugf("All lookup goroutines completed\n")
-	}()
-
-	// Wait for either completion or lookup timeout
-	select {
-	case <-done:
-		debugf("Discovery completed, found %d Homebridge services\n", len(homebridgeServices))
-	case <-lookupCtx.Done():
-		debugf("Lookup phase timed out after %v, found %d Homebridge services so far\n",
-			TimeoutConfig.MDNSLookupMax, len(homebridgeServices))
-		return homebridgeServices, nil // Don't return error for lookup timeout
+	for _, serviceName := range servicesToLookup {
+		wg.Add(1)
+		go c.lookupWorker(lookupCtx, serviceName, semaphore, wg, mu, homebridgeServices)
 	}
 
-	return homebridgeServices, nil
+	wg.Wait()
+	debugf("All lookup goroutines completed\n")
+}
+
+func (c *MDNSClient) lookupWorker(
+	lookupCtx context.Context,
+	serviceName string,
+	semaphore chan struct{},
+	wg *sync.WaitGroup,
+	mu *sync.Mutex,
+	homebridgeServices *[]MDNSService,
+) {
+	defer wg.Done()
+
+	if !c.acquireSemaphore(lookupCtx, serviceName, semaphore) {
+		return
+	}
+	defer func() { <-semaphore }()
+
+	if !c.checkLookupContext(lookupCtx, serviceName) {
+		return
+	}
+
+	service := c.lookupServiceWithRetries(lookupCtx, serviceName, "_hap._tcp")
+	if service == nil {
+		debugf("Failed to lookup service details for %s\n", serviceName)
+		return
+	}
+
+	c.processLookupResult(service, mu, homebridgeServices)
+}
+
+func (*MDNSClient) acquireSemaphore(lookupCtx context.Context, serviceName string, semaphore chan struct{}) bool {
+	select {
+	case semaphore <- struct{}{}:
+		return true
+	case <-lookupCtx.Done():
+		debugf("Context cancelled before acquiring semaphore for %s\n", serviceName)
+		return false
+	}
+}
+
+func (*MDNSClient) checkLookupContext(lookupCtx context.Context, serviceName string) bool {
+	select {
+	case <-lookupCtx.Done():
+		debugf("Context cancelled before lookup for %s\n", serviceName)
+		return false
+	default:
+		return true
+	}
+}
+
+func (*MDNSClient) processLookupResult(service *MDNSService, mu *sync.Mutex, homebridgeServices *[]MDNSService) {
+	debugf("Successfully looked up service %s at %s:%d with TXT records: %v\n",
+		service.Name, service.Host, service.Port, service.TXTRecords)
+
+	if md, exists := service.TXTRecords["md"]; exists && strings.ToLower(md) == "homebridge" {
+		debugf("Found Homebridge service: %s at %s:%d\n", service.Name, service.Host, service.Port)
+		mu.Lock()
+		*homebridgeServices = append(*homebridgeServices, *service)
+		mu.Unlock()
+	} else {
+		debugf("Skipping non-Homebridge service: %s (md=%s)\n", service.Name, md)
+	}
+}
+
+func (*MDNSClient) waitForLookupCompletion(lookupCtx context.Context, done chan struct{}, serviceCount int) {
+	select {
+	case <-done:
+		debugf("Discovery completed, found %d Homebridge services\n", serviceCount)
+	case <-lookupCtx.Done():
+		debugf("Lookup phase timed out after %v, found %d Homebridge services so far\n",
+			TimeoutConfig.MDNSLookupMax, serviceCount)
+	}
 }
 
 // lookupServiceWithRetries performs service lookup with retry logic
