@@ -11,7 +11,7 @@ A Go CLI tool to monitor Homebridge accessory status changes in real-time. Track
 - **Zero-configuration setup** with automatic Homebridge discovery via mDNS
 - **Real-time monitoring** of all Homebridge accessories
 - **Two monitoring modes**: HAP protocol (default) or HTTP API
-- **AWTRIX3 LED matrix detection** with auto-discovery (display integration planned)
+- **AWTRIX3 LED matrix display integration** with auto-discovery and output
 - **Automatic discovery** of child bridges via mDNS
 - **Human-readable output** with timestamps
 - **Debug mode** for troubleshooting
@@ -67,7 +67,7 @@ For specific setups or when auto-discovery fails:
    CLOG_HB_PORT=8581           # Homebridge UI port
    CLOG_HB_TOKEN=your_token    # Get from /api/auth/noauth
    
-   # AWTRIX3 LED matrix detection configuration (optional - for future display integration)
+   # AWTRIX3 LED matrix display configuration (optional - for display output)
    CLOG_AT3_HOST=192.168.1.200 # Your AWTRIX3 device IP
    CLOG_AT3_PORT=80            # AWTRIX3 port (usually 80)
    ```
@@ -180,8 +180,8 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 | `CLOG_HB_HOST` | auto-discover | Homebridge host IP/hostname |
 | `CLOG_HB_PORT` | `8581` | Homebridge UI port |
 | `CLOG_HB_TOKEN` | (none) | API authentication token |
-| `CLOG_AT3_HOST` | auto-discover | AWTRIX3 device IP/hostname (detection only) |
-| `CLOG_AT3_PORT` | `80` | AWTRIX3 device port (detection only) |
+| `CLOG_AT3_HOST` | auto-discover | AWTRIX3 device IP/hostname for display output |
+| `CLOG_AT3_PORT` | `80` | AWTRIX3 device port for display output |
 
 ### Command Line Options
 
@@ -189,8 +189,8 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 |------|-------------|
 | `--hb-host` | Homebridge host (overrides auto-discovery) |
 | `--hb-port` | Homebridge port (overrides env) |
-| `--at3-host` | AWTRIX3 device host for detection (overrides auto-discovery) |
-| `--at3-port` | AWTRIX3 device port for detection (overrides env) |
+| `--at3-host` | AWTRIX3 device host for display output (overrides auto-discovery) |
+| `--at3-port` | AWTRIX3 device port for display output (overrides env) |
 | `-t, --token` | Auth token (overrides env) |
 | `-i, --interval` | Polling interval (default: 3s) |
 | `-c, --count` | Number of checks before exit |

@@ -32,7 +32,7 @@ The tool has two binary names depending on installation method:
 
 **Critical Path Behavior:**
 - Homebridge discovery failure causes tool exit (required for core functionality)
-- AWTRIX3 discovery failure allows tool to continue (optional feature)
+- AWTRIX3 discovery failure allows tool to continue (optional display feature)
 
 ## Environment Configuration
 
@@ -60,7 +60,7 @@ AWTRIX3 LED matrix display API documentation stored in `ref/awtrix3-api.md` for 
 
 **Hardware**: Ulanzi TC001 - 32x8 pixel LED matrix (verified via corner pixel testing)
 
-**Auto-Discovery**: AWTRIX3 devices advertise themselves via mDNS service discovery using `_awtrix._tcp` service type. Discovery includes:
+**Auto-Discovery & Display Integration**: AWTRIX3 devices are fully integrated with auto-discovery and display output. Devices advertise themselves via mDNS service discovery using `_awtrix._tcp` service type. Discovery includes:
 - Service name pattern: `awtrix_XXXXXX` (where XXXXXX is device identifier)
 - Default port: 80
 - TXT records: `type=awtrix3`, `name=device_name`, `id=device_id`
