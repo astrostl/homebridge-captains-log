@@ -498,44 +498,36 @@ func (c *MDNSClient) lookupServiceWithRetries(ctx context.Context, serviceName, 
 	return nil
 }
 
-// filterServicesByExpectedNames filters mDNS service names to only include those that might match expected child bridge names
+// filterServicesByExpectedNames filters mDNS service names to only include those that match expected child bridge names
+// mDNS service names have trailing identifiers (e.g., "TplinkSmarthome 4160") that we trim for comparison
 func filterServicesByExpectedNames(serviceNames []string, expectedNames []string) []string {
 	var filtered []string
 
-	// Create a map for faster lookups and handle various name variations
+	// Create a map of expected names for O(1) lookup
 	expectedMap := make(map[string]bool)
 	for _, name := range expectedNames {
-		// Add the exact name
 		expectedMap[strings.ToLower(name)] = true
-		// Also add common variations that might appear in mDNS
-		expectedMap[strings.ToLower(strings.ReplaceAll(name, " ", ""))] = true
-		expectedMap[strings.ToLower(strings.ReplaceAll(name, "-", ""))] = true
-		expectedMap[strings.ToLower(strings.ReplaceAll(name, "_", ""))] = true
 	}
 
 	for _, serviceName := range serviceNames {
-		serviceLower := strings.ToLower(serviceName)
-
-		// Check exact match
-		if expectedMap[serviceLower] {
-			filtered = append(filtered, serviceName)
+		// Trim the last word (identifier) from the mDNS service name for comparison
+		// e.g., "TplinkSmarthome 4160" becomes "TplinkSmarthome"
+		fields := strings.Fields(serviceName)
+		if len(fields) == 0 {
 			continue
 		}
-
-		// Check if service name contains any expected name (partial match)
-		for _, expectedName := range expectedNames {
-			expectedLower := strings.ToLower(expectedName)
-			if strings.Contains(serviceLower, expectedLower) || strings.Contains(expectedLower, serviceLower) {
-				filtered = append(filtered, serviceName)
-				break
-			}
+		
+		var trimmedName string
+		if len(fields) > 1 {
+			trimmedName = strings.Join(fields[:len(fields)-1], " ")
+		} else {
+			trimmedName = fields[0]
 		}
-	}
-
-	// If no matches found, include all services as fallback
-	if len(filtered) == 0 {
-		debugf("No services matched expected names, including all services as fallback\n")
-		return serviceNames
+		
+		// Check for exact match with trimmed name
+		if expectedMap[strings.ToLower(trimmedName)] {
+			filtered = append(filtered, serviceName) // Keep original full name for HAP operations
+		}
 	}
 
 	return filtered

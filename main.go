@@ -663,16 +663,9 @@ func checkAllBridgesOptimizedDiscoveryOnly(cachedChildBridges *[]ChildBridge, ca
 }
 
 func isKnownChildBridge(hapService HAPAccessory, _ []ChildBridge) bool {
-	// Since we're already filtering to only Homebridge services via TXT records,
-	// we just need to exclude the main bridge and include everything else
-
-	// Skip the main bridge (typically named "Homebridge XXXX YYYY")
-	if strings.HasPrefix(hapService.Name, "Homebridge ") {
-		debugf("Skipping main Homebridge service: %s\n", hapService.Name)
-		return false
-	}
-
-	// All other Homebridge services should be child bridges
+	// Since mDNS services are already pre-filtered to match child bridge names from the API,
+	// and the child bridges API only returns actual child bridges (not the main bridge),
+	// all services that reach this point are valid child bridges
 	debugf("Including child bridge HAP service: %s\n", hapService.Name)
 	return true
 }
