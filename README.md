@@ -1,5 +1,7 @@
 # Homebridge Captain's Log
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/astrostl/homebridge-captains-log)](https://goreportcard.com/report/github.com/astrostl/homebridge-captains-log)
+
 > **⚠️ Disclaimer**: This software was "vibe coded" with Claude Code. Use at your own risk. No warranty or guarantee is provided.
 
 A Go CLI tool to monitor Homebridge accessory status changes in real-time. Track when lights turn on/off, outlets switch states, and other HomeKit accessory changes across your smart home.
@@ -18,11 +20,23 @@ A Go CLI tool to monitor Homebridge accessory status changes in real-time. Track
 
 ### Installation
 
+#### Option 1: Using Go (Recommended)
+
+```bash
+go install github.com/astrostl/homebridge-captains-log@latest
+```
+
+The binary will be installed as `homebridge-captains-log` in your `$GOPATH/bin` directory.
+
+#### Option 2: Build from Source
+
 ```bash
 git clone https://github.com/astrostl/homebridge-captains-log
 cd homebridge-captains-log
 make build
 ```
+
+This creates the `hb-clog` binary in the current directory.
 
 ### Configuration
 
@@ -148,7 +162,7 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 | `-h, --host` | Homebridge host (overrides env) |
 | `-p, --port` | Homebridge port (overrides env) |
 | `-t, --token` | Auth token (overrides env) |
-| `-i, --interval` | Polling interval (default: 30s) |
+| `-i, --interval` | Polling interval (default: 3s) |
 | `-c, --count` | Number of checks before exit |
 | `-d, --debug` | Enable debug output |
 | `-m, --main` | Monitor main bridge only instead of child bridges |

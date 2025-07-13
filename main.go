@@ -101,7 +101,7 @@ var TimeoutConfig = struct {
 	LookupRetryDelay: 500 * time.Millisecond,
 
 	// Default intervals
-	DefaultPollingInterval: 30 * time.Second,
+	DefaultPollingInterval: 3 * time.Second,
 }
 
 // Application constants
@@ -130,7 +130,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&host, "host", "H", defaultHost, "Homebridge UI host")
 	rootCmd.Flags().IntVarP(&port, "port", "p", defaultPort, "Homebridge UI port")
 	rootCmd.Flags().DurationVarP(&interval, "interval", "i", TimeoutConfig.DefaultPollingInterval,
-		"Polling interval (duration format: 30s, 1m, etc.)")
+		"Polling interval (duration format: 3s, 30s, 1m, etc.)")
 	rootCmd.Flags().IntVarP(&count, "count", "c", -1,
 		"Number of checks to perform (0 = discovery-only, default = infinite)")
 	rootCmd.Flags().StringVarP(&token, "token", "t", defaultToken, "Homebridge UI auth token")

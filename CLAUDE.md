@@ -6,6 +6,17 @@ A Go CLI tool to monitor Homebridge accessory status changes.
 
 **CRITICAL: README.md must always include a disclaimer at the top stating this software was "vibe coded" with Claude Code, use at your own risk, no warranty or guarantee provided.**
 
+## Binary Naming Convention
+
+The tool has two binary names depending on installation method:
+- `go install` creates `homebridge-captains-log` (long name based on repo name)
+- `make build` creates `hb-clog` (short name for convenience)
+
+**Documentation Policy:**
+- README examples should use `./hb-clog` for consistency
+- Only mention the long name when explaining `go install` behavior
+- All other documentation, examples, and references should use the short name
+
 ## Environment Configuration
 
 For testing, a `.env` file contains the Homebridge configuration using CLOG_ prefix:
