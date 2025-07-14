@@ -167,6 +167,30 @@ go install github.com/mgechev/revive@latest  # Test latest before updating Makef
 
 Update the version variables in the Makefile after testing, then run `make deps` to install updated tools.
 
+### Version Management
+
+**CRITICAL: When creating new releases, the version in main.go MUST be updated to match the git tag.**
+
+The application version is defined in `main.go`:
+```go
+// Application version
+const Version = "0.4.0"
+```
+
+**Release Process:**
+1. Update the `Version` constant in `main.go` to match the intended git tag (e.g., "0.4.0")
+2. Update CHANGELOG.md with the new version entry
+3. Run full quality checks with `make all`
+4. Commit changes with descriptive message
+5. Create git tag matching the version: `git tag v0.4.0`
+6. Push commits and tags to GitHub
+
+**Version Synchronization:**
+- Git tag format: `v0.4.0` (with 'v' prefix)
+- main.go Version constant: `"0.4.0"` (without 'v' prefix)
+- CHANGELOG.md entry: `## [0.4.0] - 2025-07-14` (without 'v' prefix)
+- These MUST always be synchronized for consistent versioning
+
 ### Using Makefile (REQUIRED)
 
 **🚨 CRITICAL: ALWAYS use the Makefile for building - NEVER use `go build` directly**
