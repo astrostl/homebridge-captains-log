@@ -373,6 +373,8 @@ func processChangeMessage(accessoryName, characteristic string, oldValue, newVal
 		return formatMotionChange(accessoryName, newValue)
 	case "CurrentTemperature", "Current Temperature":
 		return formatTemperatureChange(accessoryName, oldValue, newValue)
+	case "Lock Current State":
+		return formatLockCurrentStateChange(accessoryName, newValue)
 	default:
 		return fmt.Sprintf("%s: %s %v -> %v", accessoryName, characteristic, oldValue, newValue)
 	}
@@ -418,6 +420,17 @@ func formatTemperatureChange(accessoryName string, oldValue, newValue interface{
 	newTempF := (newTemp * celsiusToFahrenheitMultiplier / celsiusToFahrenheitDivisor) + fahrenheitOffset
 
 	return fmt.Sprintf("%s: temperature %.1f°F → %.1f°F", accessoryName, oldTempF, newTempF)
+}
+
+func formatLockCurrentStateChange(accessoryName string, newValue interface{}) string {
+	if val, ok := newValue.(float64); ok {
+		if val == 0 {
+			return fmt.Sprintf("%s: UNLOCKED", accessoryName)
+		} else if val == 1 {
+			return fmt.Sprintf("%s: LOCKED", accessoryName)
+		}
+	}
+	return fmt.Sprintf("%s: Lock Current State %v", accessoryName, newValue)
 }
 
 // resolveHomebridgeLocation determines the final host/port to use

@@ -20,7 +20,7 @@ A Go CLI tool to monitor Homebridge accessory status changes in real-time. Track
 
 ## Demo
 
-![Homebridge Captain's Log in action](homebridge-captains-log-ulanzi-tc001.gif)
+![Homebridge Captain's Log in action](demo.gif)
 
 *Real-time monitoring of Homebridge accessories with automatic discovery and AWTRIX3 display integration*
 
