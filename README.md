@@ -76,6 +76,7 @@ For specific setups or when auto-discovery fails:
    # AWTRIX3 LED matrix display configuration (optional - for display output)
    CLOG_AT3_HOST=192.168.1.200 # Your AWTRIX3 device IP
    CLOG_AT3_PORT=80            # AWTRIX3 port (usually 80)
+   CLOG_AT3_EXCLUDE=volts,batterylevel  # Exclude specific characteristics from notifications
    ```
 
 3. Get your authentication token:
@@ -110,8 +111,11 @@ For specific setups or when auto-discovery fails:
 # Run for specific number of checks then exit
 ./hb-clog -c 5
 
+# Exclude specific characteristics from AWTRIX3 notifications
+./hb-clog -e volts,batterylevel
+
 # Combine options
-./hb-clog -d -i 5s -c 10
+./hb-clog -d -i 5s -c 10 -e volts
 ```
 
 ## Monitoring Modes
@@ -204,6 +208,7 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 | `CLOG_HB_TOKEN` | (none) | API authentication token |
 | `CLOG_AT3_HOST` | auto-discover | AWTRIX3 device IP/hostname for display output |
 | `CLOG_AT3_PORT` | `80` | AWTRIX3 device port for display output |
+| `CLOG_AT3_EXCLUDE` | (none) | Comma-separated list of characteristics to exclude from AWTRIX3 notifications (case-insensitive) |
 
 ### Command Line Options
 
@@ -213,6 +218,7 @@ timeout 3s dns-sd -L "ServiceName" _hap._tcp local.
 | `--hb-port` | Homebridge port (overrides env) |
 | `--at3-host` | AWTRIX3 device host for display output (overrides auto-discovery) |
 | `--at3-port` | AWTRIX3 device port for display output (overrides env) |
+| `-e, --exclude` | Comma-separated list of characteristics to exclude from AWTRIX3 notifications (case-insensitive) |
 | `-t, --token` | Auth token (overrides env) |
 | `-i, --interval` | Polling interval (default: 3s) |
 | `-c, --count` | Number of checks before exit |

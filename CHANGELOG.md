@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-07-14
+
+### Added
+- **Characteristic exclusion system** - New `-e/--exclude` flag and `CLOG_AT3_EXCLUDE` environment variable to filter out specific characteristics from AWTRIX3 notifications (case-insensitive matching)
+- **Version flag** - Added `-v/--version` flag to display application version
+- **Smart temperature conversion** - Automatic Celsius to Fahrenheit conversion in temperature change notifications for better readability
+- **Enhanced characteristic formatting** - Intelligent message formatting for different accessory types (contact sensors, motion detectors, switches)
+- **Improved AWTRIX3 integration** - Better notification filtering and processing with exclusion support
+
+### Changed
+- **Cleaner console output** - Non-debug mode now shows more concise, user-friendly output with bridge name prefixes
+- **Enhanced message processing** - Smarter characteristic change messages with context-aware formatting
+- **Better exclusion handling** - Excluded characteristics are still logged but marked as "(excluded)" and filtered from AWTRIX3 notifications
+
+### Fixed
+- **Output formatting consistency** - Improved synchronization and formatting of accessory change notifications
+- **AWTRIX3 notification reliability** - Better handling of characteristic filtering and message processing
+
+### Development
+- **Expanded test coverage** - Comprehensive tests for new exclusion system and message formatting
+- **Code organization improvements** - Better separation of concerns for notification processing and filtering
+
 ## [0.3.3] - 2025-07-13
 
 ### Fixed

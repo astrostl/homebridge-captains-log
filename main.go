@@ -22,6 +22,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Application version
+const Version = "0.4.0"
+
+// Temperature conversion constants
+const (
+	celsiusToFahrenheitMultiplier = 9.0
+	celsiusToFahrenheitDivisor    = 5.0
+	fahrenheitOffset              = 32.0
+)
+
 type AccessoryStatus struct {
 	UniqueID    string                 `json:"uniqueId"`
 	ServiceName string                 `json:"serviceName"`
@@ -50,9 +60,10 @@ var (
 	debug    bool
 
 	// AWTRIX3 configuration
-	at3Host    string
-	at3Port    int
-	at3Disable bool
+	at3Host                  string
+	at3Port                  int
+	at3Disable               bool
+	at3CharacteristicExclude []string
 
 	// Global AWTRIX3 client
 	awtrix3Client *AWTRIX3Client
@@ -229,6 +240,7 @@ func init() {
 	// AWTRIX3 configuration
 	defaultAT3Host := getEnvOrDefault("CLOG_AT3_HOST", "")
 	defaultAT3Port := getEnvIntOrDefault("CLOG_AT3_PORT", DefaultAWTRIX3Port)
+	defaultAT3CharacteristicExclude := getEnvOrDefault("CLOG_AT3_EXCLUDE", "")
 
 	rootCmd.Flags().StringVarP(&host, "hb-host", "H", defaultHost, "Homebridge UI host (default auto-discovered)")
 	rootCmd.Flags().IntVarP(&port, "hb-port", "P", defaultPort, "Homebridge UI port")
@@ -243,7 +255,12 @@ func init() {
 	rootCmd.Flags().StringVar(&at3Host, "at3-host", defaultAT3Host, "AWTRIX3 host IP/hostname (default auto-discovered)")
 	rootCmd.Flags().IntVar(&at3Port, "at3-port", defaultAT3Port, "AWTRIX3 port")
 	rootCmd.Flags().BoolVar(&at3Disable, "at3-disable", false, "Disable AWTRIX3 change emission")
+	rootCmd.Flags().StringSliceVarP(&at3CharacteristicExclude, "exclude", "e",
+		parseCharacteristicExcludeList(defaultAT3CharacteristicExclude),
+		"Comma-separated list of characteristics to exclude from AWTRIX3 notifications "+
+			"(case-insensitive, e.g., 'volts,batterylevel')")
 	rootCmd.Flags().BoolP("main", "m", false, "Monitor main bridge only (default child bridges only)")
+	rootCmd.Flags().BoolP("version", "v", false, "Show version and exit")
 }
 
 func main() {
@@ -256,6 +273,12 @@ func main() {
 }
 
 func runMonitor(cmd *cobra.Command, _ []string) {
+	// Handle version flag
+	if version, _ := cmd.Flags().GetBool("version"); version {
+		fmt.Printf("hb-clog version %s\n", Version)
+		return
+	}
+
 	// Auto-discover Homebridge if host/port not manually configured
 	finalHost, finalPort := resolveHomebridgeLocation(cmd)
 	if finalHost == "" {
@@ -310,6 +333,91 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+// parseCharacteristicExcludeList parses a comma-separated list and normalizes to lowercase
+func parseCharacteristicExcludeList(value string) []string {
+	if value == "" {
+		return []string{}
+	}
+	parts := strings.Split(value, ",")
+	var result []string
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, strings.ToLower(trimmed))
+		}
+	}
+	return result
+}
+
+// isCharacteristicExcluded checks if a characteristic should be excluded from AWTRIX3 notifications
+func isCharacteristicExcluded(characteristic string) bool {
+	charLower := strings.ToLower(characteristic)
+	for _, excluded := range at3CharacteristicExclude {
+		if strings.Contains(charLower, strings.ToLower(excluded)) {
+			return true
+		}
+	}
+	return false
+}
+
+// processChangeMessage creates a smart, human-readable message for characteristic changes
+func processChangeMessage(accessoryName, characteristic string, oldValue, newValue interface{}) string {
+	switch characteristic {
+	case "On":
+		return formatOnOffChange(accessoryName, newValue)
+	case "ContactSensorState", "Contact Sensor State":
+		return formatContactSensorChange(accessoryName, newValue)
+	case "MotionDetected", "Motion Detected":
+		return formatMotionChange(accessoryName, newValue)
+	case "CurrentTemperature", "Current Temperature":
+		return formatTemperatureChange(accessoryName, oldValue, newValue)
+	default:
+		return fmt.Sprintf("%s: %s %v -> %v", accessoryName, characteristic, oldValue, newValue)
+	}
+}
+
+func formatOnOffChange(accessoryName string, newValue interface{}) string {
+	if val, ok := newValue.(bool); ok && val {
+		return fmt.Sprintf("%s: ON", accessoryName)
+	}
+	if val, ok := newValue.(float64); ok && val == 1.0 {
+		return fmt.Sprintf("%s: ON", accessoryName)
+	}
+	return fmt.Sprintf("%s: OFF", accessoryName)
+}
+
+func formatContactSensorChange(accessoryName string, newValue interface{}) string {
+	if newValue.(float64) == 0 {
+		return fmt.Sprintf("%s: CLOSED", accessoryName)
+	}
+	return fmt.Sprintf("%s: OPENED", accessoryName)
+}
+
+func formatMotionChange(accessoryName string, newValue interface{}) string {
+	if val, ok := newValue.(bool); ok && val {
+		return fmt.Sprintf("%s: DETECTED", accessoryName)
+	}
+	if val, ok := newValue.(float64); ok && val == 1.0 {
+		return fmt.Sprintf("%s: DETECTED", accessoryName)
+	}
+	return fmt.Sprintf("%s: CLEARED", accessoryName)
+}
+
+func formatTemperatureChange(accessoryName string, oldValue, newValue interface{}) string {
+	oldTemp, oldOk := oldValue.(float64)
+	newTemp, newOk := newValue.(float64)
+
+	if !oldOk || !newOk {
+		return fmt.Sprintf("%s: temperature %v → %v", accessoryName, oldValue, newValue)
+	}
+
+	// Convert Celsius to Fahrenheit
+	oldTempF := (oldTemp * celsiusToFahrenheitMultiplier / celsiusToFahrenheitDivisor) + fahrenheitOffset
+	newTempF := (newTemp * celsiusToFahrenheitMultiplier / celsiusToFahrenheitDivisor) + fahrenheitOffset
+
+	return fmt.Sprintf("%s: temperature %.1f°F → %.1f°F", accessoryName, oldTempF, newTempF)
 }
 
 // resolveHomebridgeLocation determines the final host/port to use
@@ -423,7 +531,6 @@ func initializeAWTRIX3Client(cmd *cobra.Command) {
 	}
 
 	// Auto-discover AWTRIX3 devices
-	fmt.Printf("Auto-discovering AWTRIX3 devices...\n")
 	client := NewMDNSClient(TimeoutConfig.MDNSTotal)
 	ctx := context.Background()
 
@@ -438,11 +545,6 @@ func initializeAWTRIX3Client(cmd *cobra.Command) {
 		fmt.Printf("No AWTRIX3 devices found\n")
 		awtrix3Client = NewAWTRIX3Client([]MDNSService{})
 		return
-	}
-
-	fmt.Printf("Found %d AWTRIX3 device(s):\n", len(awtrixDevices))
-	for _, device := range awtrixDevices {
-		fmt.Printf("  - %s at %s:%d\n", device.Name, device.Host, device.Port)
 	}
 
 	awtrix3Client = NewAWTRIX3Client(awtrixDevices)
@@ -492,7 +594,7 @@ func discoverServices() (string, []MDNSService) {
 	if homebridgeRes.err != nil {
 		debugf("CRITICAL: Homebridge discovery failed: %v\n", homebridgeRes.err)
 		fmt.Printf("ERROR: Failed to discover Homebridge services: %v\n", homebridgeRes.err)
-		return "", awtrixServices
+		return "", []MDNSService{}
 	}
 	mdnsServices = homebridgeRes.services
 	debugf("Found %d Homebridge services via mDNS\n", len(mdnsServices))
@@ -501,7 +603,7 @@ func discoverServices() (string, []MDNSService) {
 	awtrixRes := <-awtrixChan
 	if awtrixRes.err != nil {
 		debugf("AWTRIX discovery failed (non-critical): %v\n", awtrixRes.err)
-		awtrixServices = nil
+		awtrixServices = []MDNSService{}
 	} else {
 		awtrixServices = awtrixRes.services
 		debugf("Found %d AWTRIX devices via mDNS\n", len(awtrixServices))
@@ -805,106 +907,112 @@ func (*StatusMonitor) hasChanged(old, current AccessoryStatus) bool {
 	return !reflect.DeepEqual(old.Values, current.Values)
 }
 
-func (m *StatusMonitor) reportChange(old, current AccessoryStatus) {
+func (*StatusMonitor) reportChange(old, current AccessoryStatus) {
 	fmt.Printf("\n[%s] %s:\n",
 		current.LastUpdated.Format("15:04:05"),
 		current.ServiceName)
 
+	changeMessages := collectChangeMessages(old, current)
+	sendAWTRIX3Notifications(changeMessages)
+}
+
+func collectChangeMessages(old, current AccessoryStatus) []string {
 	var changeMessages []string
+
+	changeMessages = append(changeMessages, processValueChanges(old, current)...)
+	changeMessages = append(changeMessages, processNewValues(old, current)...)
+	changeMessages = append(changeMessages, processRemovedValues(old, current)...)
+
+	return changeMessages
+}
+
+func processValueChanges(old, current AccessoryStatus) []string {
+	var messages []string
 
 	for key, newValue := range current.Values {
 		if oldValue, exists := old.Values[key]; exists {
 			if !reflect.DeepEqual(oldValue, newValue) {
-				message := m.formatChangeMessage(key, oldValue, newValue, current.ServiceName)
+				message := createChangeMessage(current.ServiceName, key, oldValue, newValue)
 				fmt.Printf("  %s\n", message)
-				changeMessages = append(changeMessages, fmt.Sprintf("%s: %s", current.ServiceName, message))
+				messages = append(messages, message)
 			}
-		} else {
-			message := fmt.Sprintf("%s: (new) %v", key, newValue)
-			fmt.Printf("  %s\n", message)
-			changeMessages = append(changeMessages, fmt.Sprintf("%s: %s", current.ServiceName, message))
 		}
 	}
+
+	return messages
+}
+
+func processNewValues(old, current AccessoryStatus) []string {
+	var messages []string
+
+	for key, newValue := range current.Values {
+		if _, exists := old.Values[key]; !exists {
+			message := fmt.Sprintf("%s: %s (new) %v", current.ServiceName, key, newValue)
+			fmt.Printf("  %s\n", message)
+			messages = append(messages, message)
+		}
+	}
+
+	return messages
+}
+
+func processRemovedValues(old, current AccessoryStatus) []string {
+	var messages []string
 
 	for key, oldValue := range old.Values {
 		if _, exists := current.Values[key]; !exists {
 			message := fmt.Sprintf("%s: %v → (removed)", key, oldValue)
 			fmt.Printf("  %s\n", message)
-			changeMessages = append(changeMessages, fmt.Sprintf("%s: %s", current.ServiceName, message))
+			messages = append(messages, fmt.Sprintf("%s: %s", current.ServiceName, message))
 		}
 	}
 
-	// Send changes to AWTRIX3 if available
-	// AWTRIX3 handles queuing automatically when Stack=true (default behavior)
-	// Each notification shows exactly once with rainbow text
-	if awtrix3Client != nil && len(changeMessages) > 0 {
-		for _, message := range changeMessages {
-			notification := AWTRIX3Notification{
-				Text:    message,
-				Repeat:  1,    // Show message exactly once
-				Rainbow: true, // Rainbow text effect
-				Stack:   true, // Queue notifications (AWTRIX3 handles the queue)
+	return messages
+}
+
+func createChangeMessage(serviceName, key string, oldValue, newValue interface{}) string {
+	if isCharacteristicExcluded(key) {
+		smartMsg := processChangeMessage(serviceName, key, oldValue, newValue)
+		return smartMsg + " (excluded)"
+	}
+	return processChangeMessage(serviceName, key, oldValue, newValue)
+}
+
+func sendAWTRIX3Notifications(changeMessages []string) {
+	if awtrix3Client == nil || len(changeMessages) == 0 {
+		return
+	}
+
+	for _, message := range changeMessages {
+		if shouldExcludeFromAWTRIX3(message) {
+			continue
+		}
+
+		notification := AWTRIX3Notification{
+			Text:    message,
+			Repeat:  1,    // Show message exactly once
+			Rainbow: true, // Rainbow text effect
+			Stack:   true, // Queue notifications (AWTRIX3 handles the queue)
+		}
+		awtrix3Client.PostNotification(notification)
+	}
+}
+
+func shouldExcludeFromAWTRIX3(message string) bool {
+	// Extract characteristic name from message for filtering
+	// Message format: "ServiceName: characteristic changed from X to Y"
+	parts := strings.Split(message, ": ")
+	if len(parts) >= 2 {
+		charParts := strings.Split(parts[1], " changed from")
+		if len(charParts) >= 1 {
+			characteristic := strings.TrimSpace(charParts[0])
+			if isCharacteristicExcluded(characteristic) {
+				debugf("Excluding characteristic '%s' from AWTRIX3 notification\n", characteristic)
+				return true
 			}
-			awtrix3Client.PostNotification(notification)
 		}
 	}
-}
-
-func (*StatusMonitor) formatChangeMessage(key string, oldValue, newValue interface{}, _ string) string {
-	switch key {
-	case "On":
-		return formatOnOffMessage(newValue)
-	case "ContactSensorState":
-		return formatContactSensorMessage(newValue)
-	case "MotionDetected":
-		return formatMotionMessage(newValue)
-	case "Brightness":
-		return fmt.Sprintf("brightness: %v%% → %v%%", oldValue, newValue)
-	case "CurrentTemperature":
-		return fmt.Sprintf("temperature: %.1f°C → %.1f°C", oldValue, newValue)
-	case "CurrentRelativeHumidity":
-		return fmt.Sprintf("humidity: %.1f%% → %.1f%%", oldValue, newValue)
-	case "BatteryLevel":
-		return fmt.Sprintf("battery: %v%% → %v%%", oldValue, newValue)
-	case "StatusLowBattery":
-		return formatBatteryStatusMessage(newValue)
-	default:
-		return fmt.Sprintf("%s: %v → %v", key, oldValue, newValue)
-	}
-}
-
-func formatOnOffMessage(newValue interface{}) string {
-	if val, ok := newValue.(bool); ok && val {
-		return "turned ON"
-	}
-	if val, ok := newValue.(float64); ok && val == 1.0 {
-		return "turned ON"
-	}
-	return "turned OFF"
-}
-
-func formatContactSensorMessage(newValue interface{}) string {
-	if newValue.(float64) == 0 {
-		return "door/window CLOSED"
-	}
-	return "door/window OPENED"
-}
-
-func formatMotionMessage(newValue interface{}) string {
-	if val, ok := newValue.(bool); ok && val {
-		return "motion DETECTED"
-	}
-	if val, ok := newValue.(float64); ok && val == 1.0 {
-		return "motion DETECTED"
-	}
-	return "motion CLEARED"
-}
-
-func formatBatteryStatusMessage(newValue interface{}) string {
-	if newValue.(float64) == 1 {
-		return "⚠️  LOW BATTERY"
-	}
-	return "battery OK"
+	return false
 }
 
 func runHAPMonitor(maxChecks int) {
@@ -914,7 +1022,11 @@ func runHAPMonitor(maxChecks int) {
 	} else if maxChecks == 0 {
 		checksInfo = "discovery-only"
 	}
-	fmt.Printf("Starting Homebridge Captain's Log (checks: %s, interval: %v)\n", checksInfo, interval)
+	excludeInfo := ""
+	if len(at3CharacteristicExclude) > 0 {
+		excludeInfo = fmt.Sprintf(", exclude:%s", strings.Join(at3CharacteristicExclude, ","))
+	}
+	fmt.Printf("Starting Homebridge Captain's Log (checks: %s, interval: %v%s)\n", checksInfo, interval, excludeInfo)
 
 	// Track status for each discovered bridge
 	bridgeStatusMap := make(map[string]map[string]interface{})
@@ -990,69 +1102,93 @@ func checkAllBridgesOptimizedWithRetry(
 		return
 	}
 
-	// Check if we found fewer services than expected and retry if needed
-	if len(hapServices) < len(currentChildBridges) {
-		if attempt < 3 {
-			debugf("mDNS found only %d/%d expected bridges on attempt %d, retrying...\n",
-				len(hapServices), len(currentChildBridges), attempt)
-			time.Sleep(TimeoutConfig.RetryDelay)
-			checkAllBridgesOptimizedWithRetry(
-				bridgeStatusMap, cachedChildBridges, cachedHAPServices, true, attempt+1)
-			return
-		}
-		fmt.Printf("ERROR: Failed to find all bridges after 3 attempts\n")
-		displaydiscoveryResults(currentChildBridges, hapServices)
-		fmt.Printf("Discovery incomplete - exiting. Check that all child bridges are running and " +
-			"advertising _hap._tcp services.\n")
+	if shouldRetryDiscovery(hapServices, currentChildBridges, attempt) {
+		retryDiscovery(bridgeStatusMap, cachedChildBridges, cachedHAPServices, attempt)
 		return
 	}
 
-	// Show discovery results based on whether we used cache or did full discovery
+	if len(hapServices) < len(currentChildBridges) {
+		handleFailedDiscovery(currentChildBridges, hapServices)
+		return
+	}
 	if usedCache {
+		displayCachedResults()
+	} else {
+		displayNewDiscoveryResults(currentChildBridges, hapServices)
+	}
+	processHAPServices(bridgeStatusMap, hapServices)
+}
+
+func shouldRetryDiscovery(hapServices []HAPAccessory, currentChildBridges []ChildBridge, attempt int) bool {
+	return len(hapServices) < len(currentChildBridges) && attempt < 3
+}
+
+func retryDiscovery(
+	bridgeStatusMap map[string]map[string]interface{}, cachedChildBridges *[]ChildBridge,
+	cachedHAPServices *[]HAPAccessory, attempt int,
+) {
+	debugf("mDNS found insufficient bridges on attempt %d, retrying...\n", attempt)
+	time.Sleep(TimeoutConfig.RetryDelay)
+	checkAllBridgesOptimizedWithRetry(bridgeStatusMap, cachedChildBridges, cachedHAPServices, true, attempt+1)
+}
+
+func handleFailedDiscovery(currentChildBridges []ChildBridge, hapServices []HAPAccessory) {
+	fmt.Printf("ERROR: Failed to find all bridges after 3 attempts\n")
+	displaydiscoveryResults(currentChildBridges, hapServices)
+	fmt.Printf("Discovery incomplete - exiting. Check that all child bridges are running and " +
+		"advertising _hap._tcp services.\n")
+}
+
+func displayCachedResults() {
+	if debug {
 		fmt.Println()
 		fmt.Println("Using cached bridge configuration (no changes detected)")
-	} else {
-		displaydiscoveryResults(currentChildBridges, hapServices)
 	}
+}
 
+func displayNewDiscoveryResults(currentChildBridges []ChildBridge, hapServices []HAPAccessory) {
+	displaydiscoveryResults(currentChildBridges, hapServices)
 	debugf("Total discovered child bridge services: %d\n", len(hapServices))
+}
 
-	// Parallelize accessory checks using goroutines
+func processHAPServices(bridgeStatusMap map[string]map[string]interface{}, hapServices []HAPAccessory) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	bridgesWithAccessories := 0
 	client := &http.Client{Timeout: TimeoutConfig.HTTPAccessoryCheck}
 
-	// Process each service in parallel
 	for _, service := range hapServices {
 		wg.Add(1)
-		go func(svc HAPAccessory) {
-			defer wg.Done()
-
-			// Check if this service actually has accessories
-			if !hasHAPAccessories(svc.Host, svc.Port) {
-				debugf("Service %s at %s:%d has no accessories\n", svc.Name, svc.Host, svc.Port)
-				return
-			}
-
-			// Thread-safe increment
-			mu.Lock()
-			bridgesWithAccessories++
-			// Initialize status map for this bridge if needed
-			if bridgeStatusMap[svc.ID] == nil {
-				bridgeStatusMap[svc.ID] = make(map[string]interface{})
-			}
-			bridgeStatus := bridgeStatusMap[svc.ID]
-			mu.Unlock()
-
-			// Check accessories on this bridge with synchronized output
-			checkHAPAccessoryWithSync(client, svc, bridgeStatus, &mu)
-		}(service)
+		go processHAPService(&wg, &mu, &bridgesWithAccessories, client, service, bridgeStatusMap)
 	}
 
-	// Wait for all goroutines to complete
 	wg.Wait()
+	reportAccessoryResults(bridgesWithAccessories)
+}
 
+func processHAPService(
+	wg *sync.WaitGroup, mu *sync.Mutex, bridgesWithAccessories *int, client *http.Client,
+	svc HAPAccessory, bridgeStatusMap map[string]map[string]interface{},
+) {
+	defer wg.Done()
+
+	if !hasHAPAccessories(svc.Host, svc.Port) {
+		debugf("Service %s at %s:%d has no accessories\n", svc.Name, svc.Host, svc.Port)
+		return
+	}
+
+	mu.Lock()
+	(*bridgesWithAccessories)++
+	if bridgeStatusMap[svc.ID] == nil {
+		bridgeStatusMap[svc.ID] = make(map[string]interface{})
+	}
+	bridgeStatus := bridgeStatusMap[svc.ID]
+	mu.Unlock()
+
+	checkHAPAccessoryWithSync(client, svc, bridgeStatus, mu)
+}
+
+func reportAccessoryResults(bridgesWithAccessories int) {
 	if bridgesWithAccessories == 0 {
 		fmt.Println("No HAP services with accessories found.")
 		fmt.Println("Note: Services may only have read-only sensors or no controllable accessories.")
@@ -1392,11 +1528,15 @@ type HAPCharacteristic struct {
 
 func checkHAPAccessoryWithSync(client *http.Client, acc HAPAccessory, lastStatus map[string]interface{}, mu *sync.Mutex) {
 	var output []string
-	output = append(output, fmt.Sprintf("\n[%s] Checking %s...", time.Now().Format("15:04:05"), acc.Name))
+	if debug {
+		output = append(output, fmt.Sprintf("\n[%s] Checking %s...", time.Now().Format("15:04:05"), acc.Name))
+	}
 
 	hapResp, err := fetchHAPResponse(client, acc, &output)
 	if err != nil {
-		printOutputSync(output, mu)
+		if debug {
+			printOutputSync(output, mu)
+		}
 		return
 	}
 
@@ -1406,12 +1546,23 @@ func checkHAPAccessoryWithSync(client *http.Client, acc HAPAccessory, lastStatus
 	}
 
 	result := processAccessories(hapResp.Accessories, acc.Name, lastStatus)
-	output = append(output, result.summaryLine)
 
-	// Add individual change details if any changes were detected
-	output = append(output, result.changes...)
-
-	printOutputSync(output, mu)
+	// In non-debug mode, only show changes with bridge prefix
+	if debug {
+		output = append(output, result.summaryLine)
+		output = append(output, result.changes...)
+		printOutputSync(output, mu)
+	} else {
+		// Only print changes with bridge name prefix
+		if len(result.changes) > 0 {
+			var formattedChanges []string
+			for _, change := range result.changes {
+				formattedChange := fmt.Sprintf("[%s] %s %s", time.Now().Format("15:04:05"), acc.Name, change)
+				formattedChanges = append(formattedChanges, formattedChange)
+			}
+			printOutputSync(formattedChanges, mu)
+		}
+	}
 }
 
 type accessoryProcessResult struct {
@@ -1489,40 +1640,97 @@ func processAccessoryCharacteristics(
 	var changes []string
 
 	for _, service := range accessory.Services {
-		for _, char := range service.Characteristics {
-			key := fmt.Sprintf("%s_%d_%d_%d_%s", bridgeName, accessory.AID, service.IID, char.IID, char.Type)
-
-			if lastValue, exists := lastStatus[key]; exists {
-				if !reflect.DeepEqual(lastValue, char.Value) {
-					changeMsg := fmt.Sprintf("%s: %s changed from %v to %v",
-						accessoryName, char.Description, lastValue, char.Value)
-					changes = append(changes, changeMsg)
-					debugf("%s characteristic %s changed from %v (%T) to %v (%T)\n",
-						accessoryName, char.Description, lastValue, lastValue, char.Value, char.Value)
-					changesDetected++
-
-					// Send to AWTRIX3 if available
-					// AWTRIX3 handles queuing automatically when Stack=true
-					if awtrix3Client != nil {
-						notification := AWTRIX3Notification{
-							Text:    changeMsg,
-							Repeat:  1,    // Show message exactly once
-							Rainbow: true, // Rainbow text effect
-							Stack:   true, // Queue notifications (AWTRIX3 handles the queue)
-						}
-						awtrix3Client.PostNotification(notification)
-					}
-				}
-			} else {
-				debugf("First time seeing %s characteristic %s (%s) with value %v (%T)\n",
-					accessoryName, char.Description, char.Type, char.Value, char.Value)
-			}
-
-			lastStatus[key] = char.Value
-		}
+		serviceChanges, serviceDetected := processServiceCharacteristics(
+			service, accessory.AID, bridgeName, accessoryName, lastStatus)
+		changes = append(changes, serviceChanges...)
+		changesDetected += serviceDetected
 	}
 
 	return changesDetected, changes
+}
+
+func processServiceCharacteristics(
+	service HAPService, accessoryID int, bridgeName, accessoryName string, lastStatus map[string]interface{},
+) ([]string, int) {
+	var changes []string
+	changesDetected := 0
+
+	for _, char := range service.Characteristics {
+		result := processCharacteristic(char, accessoryID, service.IID, bridgeName, accessoryName, lastStatus)
+		if result.changed {
+			changes = append(changes, result.message)
+			changesDetected++
+		}
+	}
+
+	return changes, changesDetected
+}
+
+type characteristicProcessResult struct {
+	changed bool
+	message string
+}
+
+func processCharacteristic(
+	char HAPCharacteristic, accessoryID, serviceIID int, bridgeName, accessoryName string, lastStatus map[string]interface{},
+) characteristicProcessResult {
+	key := fmt.Sprintf("%s_%d_%d_%d_%s", bridgeName, accessoryID, serviceIID, char.IID, char.Type)
+
+	if lastValue, exists := lastStatus[key]; exists {
+		if hasValueChanged(lastValue, char.Value) {
+			changeMsg := formatCharacteristicChange(accessoryName, char, lastValue)
+			logCharacteristicChange(accessoryName, char, lastValue)
+			sendCharacteristicNotification(changeMsg, char.Description)
+			lastStatus[key] = char.Value
+			return characteristicProcessResult{changed: true, message: changeMsg}
+		}
+	} else {
+		logFirstTimeCharacteristic(accessoryName, char)
+	}
+
+	lastStatus[key] = char.Value
+	return characteristicProcessResult{changed: false}
+}
+
+func hasValueChanged(lastValue, currentValue interface{}) bool {
+	return !reflect.DeepEqual(lastValue, currentValue)
+}
+
+func formatCharacteristicChange(accessoryName string, char HAPCharacteristic, lastValue interface{}) string {
+	if isCharacteristicExcluded(char.Description) {
+		smartMsg := processChangeMessage(accessoryName, char.Description, lastValue, char.Value)
+		return smartMsg + " (excluded)"
+	}
+	return processChangeMessage(accessoryName, char.Description, lastValue, char.Value)
+}
+
+func logCharacteristicChange(accessoryName string, char HAPCharacteristic, lastValue interface{}) {
+	debugf("%s characteristic %s changed from %v (%T) to %v (%T)\n",
+		accessoryName, char.Description, lastValue, lastValue, char.Value, char.Value)
+}
+
+func sendCharacteristicNotification(changeMsg, description string) {
+	if awtrix3Client == nil {
+		return
+	}
+
+	if isCharacteristicExcluded(description) {
+		debugf("Excluding characteristic '%s' from AWTRIX3 notification\n", description)
+		return
+	}
+
+	notification := AWTRIX3Notification{
+		Text:    changeMsg,
+		Repeat:  1,    // Show message exactly once
+		Rainbow: true, // Rainbow text effect
+		Stack:   true, // Queue notifications (AWTRIX3 handles the queue)
+	}
+	awtrix3Client.PostNotification(notification)
+}
+
+func logFirstTimeCharacteristic(accessoryName string, char HAPCharacteristic) {
+	debugf("First time seeing %s characteristic %s (%s) with value %v (%T)\n",
+		accessoryName, char.Description, char.Type, char.Value, char.Value)
 }
 
 type summaryConfig struct {
@@ -1538,7 +1746,10 @@ func generateSummaryLine(config summaryConfig) string {
 	}
 
 	if config.changesDetected == 0 {
-		return fmt.Sprintf("No changes detected in %d accessories.", config.accessoryCount)
+		if debug {
+			return fmt.Sprintf("No changes detected in %d accessories.", config.accessoryCount)
+		}
+		return "" // Empty in non-debug mode
 	}
 
 	return fmt.Sprintf("Summary: %d changes detected", config.changesDetected)
