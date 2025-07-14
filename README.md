@@ -30,7 +30,7 @@ A Go CLI tool to monitor Homebridge accessory status changes in real-time. Track
 No manual configuration provided, attempting auto-discovery...
 Auto-discovered Homebridge at: 192.168.0.12:8581
 Auto-discovered AWTRIX3 at: 192.168.0.16:80
-Starting Homebridge Captain's Log (checks: infinite, interval: 3s, exclude:volts,apparent,consumption,dioxide,density,amperes,outlet)
+Starting Homebridge Captain's Log (checks: infinite, interval: 3s, exclude:volts,consumption,amperes,outlet)
 
 Discovered bridges:
   - homebridge-sec at homebridge.local:52701
