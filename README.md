@@ -27,20 +27,32 @@ A Go CLI tool to monitor Homebridge accessory status changes in real-time. Track
 ## Output Example
 
 ```
+No manual configuration provided, attempting auto-discovery...
+Auto-discovered Homebridge at: 192.168.0.12:8581
+Auto-discovered AWTRIX3 at: 192.168.0.16:80
+Starting Homebridge Captain's Log (checks: infinite, interval: 3s, exclude:volts,apparent,consumption,dioxide,density,amperes,outlet)
+
+Discovered bridges:
+  - homebridge-sec at homebridge.local:52701
+  - TplinkSmarthome at homebridge.local:52230
+  - Harmony at homebridge.local:31156
+  - Hydrawise at homebridge.local:32781
+  - PentairIntelliCenter at homebridge.local:30722
+  - Airthings Device at homebridge.local:36019
+  - Pihole at homebridge.local:57533
+
 [20:03:38] TplinkSmarthome 7829 Casa Lights: Total Consumption 4.073 -> 4.074 (excluded)
 [20:03:56] homebridge-sec 2A47 Master Motion Detector: DETECTED
 [20:03:59] TplinkSmarthome 7829 Bedroom Light: ON
 [20:03:59] TplinkSmarthome 7829 Bedroom Light: Volts 121.9 -> 122 (excluded)
 [20:04:11] homebridge-sec 2A47 Living Detector: DETECTED
-[20:04:17] TplinkSmarthome 7829 Bedroom Light: Amperes 0 -> 0.1 (excluded)
-[20:04:17] TplinkSmarthome 7829 Bedroom Light: Apparent Power 0 -> 12.1 (excluded)
-[20:04:17] TplinkSmarthome 7829 Bedroom Light: Volts 122 -> 121.8 (excluded)
 [20:04:17] TplinkSmarthome 7829 Bedroom Light: Consumption 0 -> 11.5 (excluded)
 [20:04:26] TplinkSmarthome 7829 Bedroom Light: Outlet In Use 0 -> 1 (excluded)
 [20:04:29] homebridge-sec 2A47 Living Detector: CLEARED
 [20:04:29] homebridge-sec 2A47 Garden Door: OPENED
 [20:04:32] homebridge-sec 2A47 Garden Door: CLOSED
 [20:04:38] TplinkSmarthome 7829 Bedroom Light: Total Consumption 0.194 -> 0.195 (excluded)
+[20:04:52] PentairIntelliCenter 37CX Air Sensor: temperature 73.9°F → 73.0°F
 ```
 
 ## Quick Start
