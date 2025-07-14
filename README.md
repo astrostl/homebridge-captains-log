@@ -11,7 +11,7 @@ A Go CLI tool to monitor Homebridge accessory status changes in real-time. Track
 - **Zero-configuration setup** with automatic Homebridge discovery via mDNS
 - **Real-time monitoring** of all Homebridge accessories
 - **Two monitoring modes**: HAP protocol (default) or HTTP API
-- **AWTRIX3 LED matrix display integration** with auto-discovery and output
+- **Integration with [AWTRIX3](https://github.com/Blueforcer/awtrix3) firmware LED matrix displays (tested on an [Ulanzi TC001](https://www.ulanzi.com/products/ulanzi-pixel-smart-clock-2882?_pos=1&_sid=14232622d&_ss=r&aff=2498))**
 - **Automatic discovery** of child bridges via mDNS
 - **Human-readable output** with timestamps
 - **Debug mode** for troubleshooting
