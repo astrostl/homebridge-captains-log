@@ -134,25 +134,20 @@ For specific setups or when auto-discovery fails:
 ## Output Example
 
 ```
-Using cached bridge configuration (no changes detected)
-
-[16:54:06] Checking Pihole XXXX...
-No changes detected in 2 accessories.
-
-[16:54:06] Checking Harmony XXXX...
-No changes detected in 3 accessories.
-
-[16:54:06] Checking Airthings Device XXXX...
-No changes detected in 2 accessories.
-
-[16:54:06] Checking Hydrawise XXXX...
-No changes detected in 2 accessories.
-
-[16:54:06] Checking TplinkSmarthome XXXX...
-No changes detected in 6 accessories.
-
-[16:54:06] Checking PentairIntelliCenter XXXX...
-No changes detected in 18 accessories.
+[20:03:38] TplinkSmarthome 7829 Casa Lights: Total Consumption 4.073 -> 4.074 (excluded)
+[20:03:56] homebridge-sec 2A47 Master Motion Detector: DETECTED
+[20:03:59] TplinkSmarthome 7829 Bedroom Light: ON
+[20:03:59] TplinkSmarthome 7829 Bedroom Light: Volts 121.9 -> 122 (excluded)
+[20:04:11] homebridge-sec 2A47 Living Detector: DETECTED
+[20:04:17] TplinkSmarthome 7829 Bedroom Light: Amperes 0 -> 0.1 (excluded)
+[20:04:17] TplinkSmarthome 7829 Bedroom Light: Apparent Power 0 -> 12.1 (excluded)
+[20:04:17] TplinkSmarthome 7829 Bedroom Light: Volts 122 -> 121.8 (excluded)
+[20:04:17] TplinkSmarthome 7829 Bedroom Light: Consumption 0 -> 11.5 (excluded)
+[20:04:26] TplinkSmarthome 7829 Bedroom Light: Outlet In Use 0 -> 1 (excluded)
+[20:04:29] homebridge-sec 2A47 Living Detector: CLEARED
+[20:04:29] homebridge-sec 2A47 Garden Door: OPENED
+[20:04:32] homebridge-sec 2A47 Garden Door: CLOSED
+[20:04:38] TplinkSmarthome 7829 Bedroom Light: Total Consumption 0.194 -> 0.195 (excluded)
 ```
 
 ## Development
