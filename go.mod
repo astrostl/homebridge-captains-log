@@ -5,7 +5,7 @@ go 1.24.5
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/spf13/cobra v1.9.1
-	golang.org/x/net v0.42.0
+	golang.org/x/net v0.43.0
 )
 
 require (
