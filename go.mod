@@ -4,7 +4,7 @@ go 1.24.5
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	golang.org/x/net v0.47.0
 )
 
