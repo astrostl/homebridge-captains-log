@@ -1,18 +1,18 @@
 # Homebridge Captain's Log Build Script
 
 BINARY_NAME=hb-clog
-GO_VERSION=1.24.5
+GO_VERSION=1.25.0
 
 # Tool versions (pinned for reproducible builds)
-REVIVE_VERSION=v1.11.0
+REVIVE_VERSION=v1.16.0
 GOCYCLO_VERSION=v0.6.0
-GOIMPORTS_VERSION=v0.28.0
-STATICCHECK_VERSION=2025.1.1
-GOSEC_VERSION=v2.22.5
-INEFFASSIGN_VERSION=v0.1.0
-MISSPELL_VERSION=v0.7.0
-GOVULNCHECK_VERSION=v1.1.3
-DEADCODE_VERSION=latest
+GOIMPORTS_VERSION=v0.50.0
+STATICCHECK_VERSION=v0.8.1
+GOSEC_VERSION=v2.29.0
+INEFFASSIGN_VERSION=v0.2.0
+MISSPELL_VERSION=v0.8.0
+GOVULNCHECK_VERSION=v1.8.0
+DEADCODE_VERSION=v0.50.0
 
 .PHONY: build test fmt fmts vet mod verify vulncheck clean lint cyclo imports staticcheck gosec ineffassign misspell deadcode depscan security quality check all install deps help
 
@@ -69,7 +69,7 @@ ineffassign: ## Detect ineffectual assignments
 
 misspell: ## Check for common spelling errors
 	@command -v $$(go env GOPATH)/bin/misspell >/dev/null 2>&1 || go install github.com/golangci/misspell/cmd/misspell@$(MISSPELL_VERSION)
-	$$(go env GOPATH)/bin/misspell -error .
+	$$(go env GOPATH)/bin/misspell -error $$(git ls-files '*.go' '*.md')
 
 deadcode: ## Detect unused (dead) code
 	@command -v $$(go env GOPATH)/bin/deadcode >/dev/null 2>&1 || go install golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION)
